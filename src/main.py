@@ -1,37 +1,49 @@
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
-import utils
+from scipy.signal import convolve
+import utils.utils_first as ut
 
 if __name__ == "__main__":
+
+    directory = "AlStrip_TC34_10msSampling_MountedTCs_L=0.71cm_TIMpaste_24VCPUFan_f=0.001.plw_1.csv"
+    
+    raw_df = ut.read_csv_to_pandas(directory)
+
     opAmpFrequency = input('Enter opAmp frequency: ') #0.02 Hardcoded value
-    filename = f'C:\\Users\\evanz\\OneDrive - Northeastern University\\DAPS\\Diffusivity Testing\\highAmp_AlSheet_5mm_TC34_L=0.72cm_10msSample_f={opAmpFrequency}.plw'
-    t, Temps, param = PLW2MLv5(filename)
 
     samplingRate = 1 / 0.01  # 1/sample period (seconds) in omega software
-    TempFrequency = opAmpFrequency * 2
-    tcdata = np.column_stack((t / 1000, Temps))
 
+    # Add the time column with actual time interval and cumsum
+    raw_df['time'] = 0.01
+    print(raw_df)
+    raw_df['time'] =  raw_df['time'].cumsum()
+
+    time, temps = raw_df['time'], raw_df[['TC3', 'TC4']] # API or file name socket
+
+    tempFrequency = float(opAmpFrequency) * 2
+
+    tcdata = np.column_stack((time, temps)) # TODO: Why would you devide t / 1000?
+    print(tcdata)
     # User input for which TC to use
-    TCidentity = [3, 4]  # For multi-sample data files, number corresponds to TC# in measurement
+    TCidentity = [1, 2]  # For multi-sample data files, number corresponds to TC# in measurement
 
-    for i in range(1, tcdata.shape[1]):
-        tcdata[:, i] = tcdata[:, i] - np.convolve(tcdata[:, i], np.ones(samplingRate // TempFrequency), mode='same') / (samplingRate // TempFrequency)
+    # Data pre-processing for noise-reduction, signal smoothing, normalization by removing moving average
+    tcdata = ut.process_and_plot_tcdata(tcdata, samplingRate, tempFrequency, TCidentity)
 
-    plt.plot(tcdata[:, 0], tcdata[:, TCidentity[0] + 1], tcdata[:, 0], tcdata[:, TCidentity[1] + 1])
-    [t, T] = plt.ginput()
-    t = np.round(t)
+    # User input for points selection
+    points = np.round(np.array(plt.ginput(2))[:, 0])
 
-    # Fit data
-    Fit1_params, _ = curve_fit(utils.fit_function, tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0] + 1], p0=[np.mean(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0] + 1]), np.max(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0] + 1]) - np.mean(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0] + 1]), np.pi])
-    Fit2_params, _ = curve_fit(utils.fit_function, tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1] + 1], p0=[np.mean(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1] + 1]), np.max(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1] + 1]) - np.mean(tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1] + 1]), np.pi])
-
-    phaseShifts = [Fit1_params[2], Fit2_params[2]]
+    print(points)
+    params1, adjusted_r_squared1 = ut.fit_data(tcdata, TCidentity[0], samplingRate, tempFrequency, points)
+    params2, adjusted_r_squared2 = ut.fit_data(tcdata, TCidentity[1], samplingRate, tempFrequency, points)
+    phaseShifts = [params1[2], params2[2]]
     
     # Continue with the remaining calculations
-    M = 2 * Fit1_params[1]
-    N = 2 * Fit2_params[1]
-    period = 1 / TempFrequency
+    M = 2 * params1[1]
+    N = 2 * params2[1]
+    period = 1 / tempFrequency
     
     if M < 0:
         phaseShifts[0] = phaseShifts[0] + period / 2
@@ -39,7 +51,7 @@ if __name__ == "__main__":
     
     if N < 0:
         phaseShifts[1] = phaseShifts[1] + period / 2
-        N = -N
+        N = -N  
     
     # Reduce first phase shift to the very first multiple to the right of t=0
     if phaseShifts[0] > 0:
@@ -67,16 +79,20 @@ if __name__ == "__main__":
     delta_time = phaseDifference
 
    
-    L = input('Enter the distance between thermocouples in cm: ') # 0.72  Hardcoded value
+    L = float(input('Enter the distance between thermocouples in cm: ')) # 0.72  Hardcoded value
 
     diffusivity = L**2 / (2 * delta_time * np.log(M / N))
-    print(f'R^2, Thermocouple 1 = {Fit1_params[2]}')
-    print(f'R^2, Thermocouple 2 = {Fit2_params[2]}')
+    print(f'R^2, Thermocouple 1 = {adjusted_r_squared1}')
+    print(f'R^2, Thermocouple 2 = {adjusted_r_squared2}')
 
-    plt.plot(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0] + 1],
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], utils.fit_function(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *Fit1_params),
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1] + 1],
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], utils.fit_function(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *Fit2_params))
+    ut.fitted_plot_data(tcdata, points, samplingRate, TCidentity, params1, params2, tempFrequency)
+'''
+    plt.plot(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0]],
+             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], ut.sinusoidal_model(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *params1),
+             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1]],
+             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], ut.sinusoidal_model(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *params2))
     plt.pause(2)
+'''
+
 
     # Continue with any additional code or functions as needed
