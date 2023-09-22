@@ -8,7 +8,7 @@ import utils.utils_first as ut
 if __name__ == "__main__":
 
     directory = "AlStrip_TC34_10msSampling_MountedTCs_L=0.71cm_TIMpaste_24VCPUFan_f=0.001.plw_1.csv"
-    
+
     raw_df = ut.read_csv_to_pandas(directory)
 
     opAmpFrequency = input('Enter opAmp frequency: ') #0.02 Hardcoded value
@@ -17,7 +17,7 @@ if __name__ == "__main__":
 
     # Add the time column with actual time interval and cumsum
     raw_df['time'] = 0.01
-    print(raw_df)
+
     raw_df['time'] =  raw_df['time'].cumsum()
 
     time, temps = raw_df['time'], raw_df[['TC3', 'TC4']] # API or file name socket
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     tempFrequency = float(opAmpFrequency) * 2
 
     tcdata = np.column_stack((time, temps)) # TODO: Why would you devide t / 1000?
-    print(tcdata)
+
     # User input for which TC to use
     TCidentity = [1, 2]  # For multi-sample data files, number corresponds to TC# in measurement
 
@@ -86,13 +86,4 @@ if __name__ == "__main__":
     print(f'R^2, Thermocouple 2 = {adjusted_r_squared2}')
 
     ut.fitted_plot_data(tcdata, points, samplingRate, TCidentity, params1, params2, tempFrequency)
-'''
-    plt.plot(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[0]],
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], ut.sinusoidal_model(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *params1),
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], tcdata[t[0] * samplingRate:t[1] * samplingRate, TCidentity[1]],
-             tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], ut.sinusoidal_model(tcdata[t[0] * samplingRate:t[1] * samplingRate, 0], *params2))
-    plt.pause(2)
-'''
 
-
-    # Continue with any additional code or functions as needed
