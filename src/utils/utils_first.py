@@ -89,7 +89,7 @@ def fit_data(tcdata, index, samplingRate, TempFrequency, t):
   p = len(p0)  # number of parameters in the model
   adjusted_r_squared = 1 - (1 - r_squared) * ((n - 1) / (n - p - 1))
 
-  return popt, adjusted_r_squared  # return phase shift (phi)
+  return popt, adjusted_r_squared  # return phase shift (phi), and R^2
 
 def process_and_plot_tcdata(tcdata, samplingRate, TempFrequency, TCidentity):
   """
@@ -152,3 +152,11 @@ def fitted_plot_data(tcdata, t, samplingRate, TCidentity, fitted1, fitted2, freq
   plt.legend()
   plt.show()
 
+def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+  # Trim white spaces from column names
+  df.columns = df.columns.str.strip()
+    
+  # Drop rows with any NaN values
+  df_cleaned = df.dropna()
+    
+  return df_cleaned

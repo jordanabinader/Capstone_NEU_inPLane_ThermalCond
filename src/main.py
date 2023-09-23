@@ -1,13 +1,11 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
-from scipy.signal import convolve
 import utils.utils_first as ut
 
 if __name__ == "__main__":
 
-    directory = "AlStrip_TC34_10msSampling_MountedTCs_L=0.71cm_TIMpaste_24VCPUFan_f=0.001.plw_1.csv"
+    directory = "fully_converted_AlStrip_TC34_10msSampling_MountedTCs_L=0.71cm_TIMpaste_24VCPUFan_f=0.001.plw_1.csv"
 
     raw_df = ut.read_csv_to_pandas(directory)
 
@@ -20,7 +18,9 @@ if __name__ == "__main__":
 
     raw_df['time'] =  raw_df['time'].cumsum()
 
-    time, temps = raw_df['time'], raw_df[['TC3', 'TC4']] # API or file name socket
+    cleaned_df = ut.clean_dataframe(raw_df)
+
+    time, temps = cleaned_df['time'], cleaned_df[['TC3', 'TC4']] # API or file name socket
 
     tempFrequency = float(opAmpFrequency) * 2
 
@@ -34,8 +34,10 @@ if __name__ == "__main__":
 
     # User input for points selection
     points = np.round(np.array(plt.ginput(2))[:, 0])
+    plt.close()
 
-    print(points)
+    print(f'Time interval chosen = {points}')
+
     params1, adjusted_r_squared1 = ut.fit_data(tcdata, TCidentity[0], samplingRate, tempFrequency, points)
     params2, adjusted_r_squared2 = ut.fit_data(tcdata, TCidentity[1], samplingRate, tempFrequency, points)
     phaseShifts = [params1[2], params2[2]]
@@ -82,8 +84,10 @@ if __name__ == "__main__":
     L = float(input('Enter the distance between thermocouples in cm: ')) # 0.72  Hardcoded value
 
     diffusivity = L**2 / (2 * delta_time * np.log(M / N))
+
     print(f'R^2, Thermocouple 1 = {adjusted_r_squared1}')
     print(f'R^2, Thermocouple 2 = {adjusted_r_squared2}')
+    print(f'diffusivity = {diffusivity}')
 
     ut.fitted_plot_data(tcdata, points, samplingRate, TCidentity, params1, params2, tempFrequency)
 
