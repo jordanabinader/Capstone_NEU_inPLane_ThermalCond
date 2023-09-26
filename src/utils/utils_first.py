@@ -82,14 +82,21 @@ def fit_data(tcdata, index, samplingRate, TempFrequency, t):
   except Exception as e:
       raise RuntimeError(f"Curve fitting failed with error: {str(e)}")
   
-  # Calculate the adjusted R-squared
-  _, _, r_value, _, _ = linregress(x_data, y_data)
-  r_squared = r_value**2
-  n = len(x_data)
-  p = len(p0)  # number of parameters in the model
-  adjusted_r_squared = 1 - (1 - r_squared) * ((n - 1) / (n - p - 1))
+  # Predicted y_data
+  y_pred = model_func(x_data, *popt)
 
-  return popt, adjusted_r_squared  # return phase shift (phi), and R^2
+  # Calculate R squared
+  residuals = y_data - y_pred
+  ss_res = np.sum(residuals**2)
+  ss_tot = np.sum((y_data - np.mean(y_data))**2)
+  r_squared = 1 - (ss_res / ss_tot)
+
+  # Calculate the adjusted R-squared
+  n = len(x_data)
+  p = len(p0)
+  adjusted_r_squared = 1 - (1 - r_squared) * ((n - 1) / (n - p - 1))
+    
+  return popt, adjusted_r_squared
 
 def process_and_plot_tcdata(tcdata, samplingRate, TempFrequency, TCidentity):
   """
@@ -115,7 +122,7 @@ def process_and_plot_tcdata(tcdata, samplingRate, TempFrequency, TCidentity):
   # Plotting the processed tcdata
   plt.plot(tcdata[:, 0], tcdata[:, TCidentity[0]], label=f'TC{TCidentity[0]+1}')
   plt.plot(tcdata[:, 0], tcdata[:, TCidentity[1]], label=f'TC{TCidentity[1]+1}')
-  plt.legend()
+
  
   return tcdata
 

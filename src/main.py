@@ -10,7 +10,7 @@ if __name__ == "__main__":
     raw_df = ut.read_csv_to_pandas(directory)
 
     opAmpFrequency = input('Enter opAmp frequency: ') #0.02 Hardcoded value
-
+ 
     samplingRate = 1 / 0.01  # 1/sample period (seconds) in omega software
 
     # Add the time column with actual time interval and cumsum
