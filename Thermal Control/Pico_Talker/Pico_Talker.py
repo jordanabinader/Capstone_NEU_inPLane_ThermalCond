@@ -1,6 +1,7 @@
 import serial
+import serial.tools
+import serial.tools.list_ports
 from typing import List, Dict
-
 
 
 def getValidSerialDevices():
@@ -35,7 +36,7 @@ def getValidSerialDevices():
         return acceptable_ports
 
 
-def terminalChooseSerialDevice(ports: List[serial.tools.list_ports.ListPortInfo]):
+def terminalChooseSerialDevice(ports: List): #Typing should be List[serial.tools.list_ports.ListPortInfo] but python is throwing an absolute fit because it can't seem to import the class properly. 
     """ List the valid serial ports and get user input on which one to use for the function
 
     Args:
