@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-import pycotech
+# import pycotech
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.signal import convolve
@@ -26,23 +26,23 @@ def get_fft_data(output, sf):
   # Return the frequency and intensity arrays
   return frequency, intensity
 
-def read_plw_to_pandas(plw_file):
-  """Reads a PicoLog PLW file into a Pandas DataFrame.
-
-  Args:
-    plw_file: The path to the PLW file.
-
-  Returns:
-    A Pandas DataFrame containing the data from the PLW file.
-  """
-
-  # Read the PLW file using pycotech.
-  df = pycotech.utils.read_plw(plw_file)
-
-  # Convert the pycotech DataFrame to a Pandas DataFrame.
-  df = pd.DataFrame(df)
-
-  return df
+# def read_plw_to_pandas(plw_file):
+#   """Reads a PicoLog PLW file into a Pandas DataFrame.
+#
+#   Args:
+#     plw_file: The path to the PLW file.
+#
+#   Returns:
+#     A Pandas DataFrame containing the data from the PLW file.
+#   """
+#
+#   # Read the PLW file using pycotech.
+#   df = pycotech.utils.read_plw(plw_file)
+#
+#   # Convert the pycotech DataFrame to a Pandas DataFrame.
+#   df = pd.DataFrame(df)
+#
+#   return df
 
 def read_csv_to_pandas(csv_file):
   # Read the CSV file into a pandas DataFrame.
