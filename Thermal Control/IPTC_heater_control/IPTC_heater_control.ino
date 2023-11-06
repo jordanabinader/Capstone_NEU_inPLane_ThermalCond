@@ -8,12 +8,18 @@
 
 #include <Adafruit_INA260.h>
 
+unsigned long timer_start; //variable to time how long operations take
+
+#define INA260_READ_PERIOD 500 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
+unsigned long last_read = 0;
 
 // Heater 0 Info
 #define HEATER0_PIN 14
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
 int heat0_duty = 0;
+float heat0_mV;
+float heat0_mA;
 
 
 // Heater 1 Info
@@ -21,7 +27,8 @@ int heat0_duty = 0;
 #define HEATER1_ALERT 10
 Adafruit_INA260 heat1 = Adafruit_INA260();
 int heat1_duty = 0;
-
+float heat1_mV;
+float heat1_mA;
 
 
 
@@ -58,6 +65,29 @@ void loop() {
   // however the reverse isn't true, so going to in a standard form
   if (Serial.available() > 1) {
     in_str_handler(Serial.readString());
+  }
+  if ((millis()-last_read)>INA260_READ_PERIOD) { //This could hopefully get refined if we can track the state of the PWM pulses
+    //Heater 0
+    timer_start = millis()
+    heat0_mV = heat0.readBusVoltage();
+    heat0_mA = heat0.readCurrent();
+    Serial.print(millis()-timer_start)
+    Serial.println(" ms to read heater 0")
+    Serial.print("HVA,0,"); //Heater Voltage and Amperage in mV and mA, heater number
+    Serial.print(heat0_mV);
+    Serial.print(",");
+    Serial.println(heat0_mA);
+
+    //Heater 1
+    timer_start = millis()
+    heat1_mV = heat1.readBusVoltage();
+    heat1_mA = heat1.readCurrent();
+    Serial.print(millis()-timer_start)
+    Serial.println(" ms to read heater 0")
+    Serial.print("HVA,1,"); //Heater Voltage and Amperage in mV and mA, heater number. The current and voltage are a time averaged value so some math on the computer side is going to be required for fault analysis
+    Serial.print(heat1_mV);
+    Serial.print(",");
+    Serial.println(heat1_mA);
   }
 
 }
