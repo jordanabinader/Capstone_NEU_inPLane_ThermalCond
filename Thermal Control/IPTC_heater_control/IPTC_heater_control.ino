@@ -13,17 +13,25 @@
 #define HEATER0_PIN 14
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
+int heat0_duty = 0;
 
 
 // Heater 1 Info
 #define HEATER1 12
 #define HEATER1_ALERT 10
 Adafruit_INA260 heat1 = Adafruit_INA260();
+int heat1_duty = 0;
 
 
 
 
 void setup() {
+  //PWM Initialization
+  analogWriteFreq(1000); //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time 
+  // analogWriteResolution(16); Might be necessary for higher resolution control, but not necessary rn
+  pinMode(HEATER0_PIN, OUTPUT);
+  pinMode(HEATER1_PIN, OUTPUT);
+
   // Serial Initialization
   Serial.begin(115200);
   while(!Serial){ // Wait for serial to be connected
@@ -69,8 +77,12 @@ void in_str_handler(String in_str) {
   //Changing Heater PWM Setting
   if (in_str.substring(0, splits(1))== "HPWM") {
     //Heater 1
-    if (in_str.substring(splits(1)+1, splits(2))) {
-      
+    if (int(in_str.substring(splits(1)+1, splits(2))) == 0) { //Heater 0
+      heat0_duty = int(in_str.substring(splits(2)+1, splits(3)));
+      analogWrite(HEATER0, heat0_duty);
+    } else if (int(in_str.substring(splits(1)+1, splits(2))) == 0) { //Heater 1
+      heat1_duty = int(in_str.substring(splits(2)+1, splits(3)));
+      analogWrite(HEATER1, heat1_duty);
     }
   }
 
