@@ -2,35 +2,39 @@
   This code is for the control of the heaters for the In-Plane Thermal Conductivity Measurement Device
   designed by Ben Veghte, Aaron Leach, Rocco Tropea, Jordan Abi-Nader, and Charlie Schatmeyer. 
   This code was written specificaly with Power Distribution and Control PCB in mind with a raspberry pi pico
-  however, utilizing other microcontrollers shouldn't require much change to this code
+  however, utilizing other microcontrollers shouldn't require much change to this code.
   */
   //  AUTHOR: Ben Veghte
 
 #include <Adafruit_INA260.h>
-#include <MBED_RP2040_PWM.h>
-#include <MBED_RP2040_PWM.hpp>
+#include "RP2040_PWM.h" //Custom, not the library by Khoi Hoang due to it being archived and not tracking latest changes in Arduino Mbed OS RP2040 Boards, changes made using directions found here: https://forum.arduino.cc/t/library-rp2040-pwm-dont-compile/1168488/2 
 
 unsigned long timer_start; //variable to time how long operations take
+
+float pwm_freq = 500; //Hz
+
 
 #define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
 
 // Heater 0 Info
-#define HEATER0 14
+#define HEATER0 10 //not the GPxx number but the physical pin number
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
-int heat0_duty = 0;
+float heat0_duty = 0;
 float heat0_mV;
 float heat0_mA;
+RP2040_PWM* h0_pwm_inst;
 
 
 // Heater 1 Info
 #define HEATER1 12
 #define HEATER1_ALERT 10
 Adafruit_INA260 heat1 = Adafruit_INA260();
-int heat1_duty = 0;
+float heat1_duty = 0;
 float heat1_mV;
 float heat1_mA;
+RP2040_PWM* h1_pwm_inst;
 
 
 
@@ -47,7 +51,7 @@ void setup() {
     delay(1);
   }
 
-  //Heater Initialization
+  //INA Initialization
   if (!heat0.begin(0x40)) {
     Serial.println("Error: Heater 0 INA260 Not Found");
     while(1);
@@ -56,6 +60,12 @@ void setup() {
     Serial.println("Error: Heater 1 INA260 Not Found");
     while(1);
   }
+
+  //PWM Initialization
+  h0_pwm_inst = new RP2040_PWM(HEATER0, pwm_freq, heat0_duty);
+  h0_pwm_inst->setPWM();
+  h1_pwm_inst = new RP2040_PWM(HEATER1, pwm_freq, heat1_duty);
+  h1_pwm_inst->setPWM();
 
   
 
@@ -111,13 +121,15 @@ void in_str_handler(String in_str) {
   
   //Changing Heater PWM Setting
   if (in_str.substring(0, splits[1])== "hpwm") {
+    Serial.println("Inside hpwm");
     //Heater 1
     if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 0
-      heat0_duty = in_str.substring(splits[2]+1, splits[3]).toInt();
-      analogWrite(HEATER0, heat0_duty);
+      Serial.println("Inside Heater 0");
+      heat0_duty = in_str.substring(splits[2]+1, splits[3]).toFloat();
+      h0_pwm_inst->setPWM(HEATER0, pwm_freq, heat0_duty);
     } else if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 1
-      heat1_duty = in_str.substring(splits[2]+1, splits[3]).toInt();
-      analogWrite(HEATER1, heat1_duty);
+      heat1_duty = in_str.substring(splits[2]+1, splits[3]).toFloat();
+      h1_pwm_inst->setPWM(HEATER1, pwm_freq, heat1_duty);
     }
   }
 
