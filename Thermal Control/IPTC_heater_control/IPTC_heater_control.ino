@@ -7,14 +7,16 @@
   //  AUTHOR: Ben Veghte
 
 #include <Adafruit_INA260.h>
+#include <MBED_RP2040_PWM.h>
+#include <MBED_RP2040_PWM.hpp>
 
 unsigned long timer_start; //variable to time how long operations take
 
-#define INA260_READ_PERIOD 500 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
+#define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
 
 // Heater 0 Info
-#define HEATER0_PIN 14
+#define HEATER0 14
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
 int heat0_duty = 0;
@@ -34,15 +36,15 @@ float heat1_mA;
 
 void setup() {
   //PWM Initialization
-  analogWriteFreq(1000); //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time 
+  // analogWriteFreq(1000); //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time, doesn't work using arduino mbed OS RP2040
   // analogWriteResolution(16); Might be necessary for higher resolution control, but not necessary rn
-  pinMode(HEATER0_PIN, OUTPUT);
-  pinMode(HEATER1_PIN, OUTPUT);
+  pinMode(HEATER0, OUTPUT);
+  pinMode(HEATER1, OUTPUT);
 
   // Serial Initialization
   Serial.begin(115200);
   while(!Serial){ // Wait for serial to be connected
-    delay(1)
+    delay(1);
   }
 
   //Heater Initialization
@@ -67,23 +69,24 @@ void loop() {
     in_str_handler(Serial.readString());
   }
   if ((millis()-last_read)>INA260_READ_PERIOD) { //This could hopefully get refined if we can track the state of the PWM pulses
+    last_read = millis();
     //Heater 0
-    timer_start = millis()
+    timer_start = millis();
     heat0_mV = heat0.readBusVoltage();
     heat0_mA = heat0.readCurrent();
-    Serial.print(millis()-timer_start)
-    Serial.println(" ms to read heater 0")
+    Serial.print(millis()-timer_start);
+    Serial.println(" ms to read heater 0");
     Serial.print("HVA,0,"); //Heater Voltage and Amperage in mV and mA, heater number
     Serial.print(heat0_mV);
     Serial.print(",");
     Serial.println(heat0_mA);
 
     //Heater 1
-    timer_start = millis()
+    timer_start = millis();
     heat1_mV = heat1.readBusVoltage();
     heat1_mA = heat1.readCurrent();
-    Serial.print(millis()-timer_start)
-    Serial.println(" ms to read heater 0")
+    Serial.print(millis()-timer_start);
+    Serial.println(" ms to read heater 0");
     Serial.print("HVA,1,"); //Heater Voltage and Amperage in mV and mA, heater number. The current and voltage are a time averaged value so some math on the computer side is going to be required for fault analysis
     Serial.print(heat1_mV);
     Serial.print(",");
@@ -94,24 +97,26 @@ void loop() {
 
 void in_str_handler(String in_str) {
   in_str.toLowerCase(); //making sure no issues arise with capitalization
+  Serial.print("Received: ");
+  Serial.println(in_str);
 
   // Seaches for all commas in the message string, format similar to NMEA messages for GPS
   int splits[10];
   splits[0] = 0;
   int i = 1;
-  while splits[i-1] >= 0 {
+  while (splits[i-1] >= 0) {
     splits[i] = in_str.indexOf(",", splits[i-1]+1);
     i++;
   }
   
   //Changing Heater PWM Setting
-  if (in_str.substring(0, splits(1))== "HPWM") {
+  if (in_str.substring(0, splits[1])== "hpwm") {
     //Heater 1
-    if (int(in_str.substring(splits(1)+1, splits(2))) == 0) { //Heater 0
-      heat0_duty = int(in_str.substring(splits(2)+1, splits(3)));
+    if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 0
+      heat0_duty = in_str.substring(splits[2]+1, splits[3]).toInt();
       analogWrite(HEATER0, heat0_duty);
-    } else if (int(in_str.substring(splits(1)+1, splits(2))) == 0) { //Heater 1
-      heat1_duty = int(in_str.substring(splits(2)+1, splits(3)));
+    } else if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 1
+      heat1_duty = in_str.substring(splits[2]+1, splits[3]).toInt();
       analogWrite(HEATER1, heat1_duty);
     }
   }
