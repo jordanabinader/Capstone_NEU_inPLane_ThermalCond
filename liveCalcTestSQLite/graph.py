@@ -4,11 +4,20 @@ import utils as ut
 import time
 import sqlite3
 
-MAX_GRAPH_BUFFER = 145000  # Limit amount of data points to be graphed, ~100,000
-TC_TIME_SHIFT = 0.68  # Time difference between TCs
+MAX_GRAPH_BUFFER = 100000  # Limit amount of data points to be graphed, ~100,000
+TC_TIME_SHIFT = 0.68  # Time difference between TCsYou will be measuring velocity with the Pitot tube
+SLEEP_TIME = 1
+DENSITY = 1
+SPECIFIC_HEAT = 1
+L = .72
+OPAMP_FREQUENCY = .001  # 1/OpAmp Period, .001 for csv
+SAMPLING_RATE = 1 / 0.01  # 1/.01 for csv, 1/.2 for daq (I think?)
+TEMP_FREQUENCY = float(OPAMP_FREQUENCY) * 2  # What is this for? Probably remove later
+DATABASE_NAME = 'your_database.db'
+TABLE_NAME = "Data1"
 
 # Connect to the database
-conn = sqlite3.connect('your_database.db')
+conn = sqlite3.connect(DATABASE_NAME)
 
 # Create a cursor
 cursor = conn.cursor()
@@ -31,15 +40,13 @@ line2F, = ax.plot([], [], 'b-', label='Channel 2 Fitted')
 ax.legend(loc='upper left')
 
 # opAmpFrequency = input('Enter opAmp frequency: ')  # 0.02 Hardcoded value
-opAmpFrequency = .001
-
-samplingRate = 1 / 0.01  # 1/sample period (seconds) in omega software
-
-tempFrequency = float(opAmpFrequency) * 2
+# samplingRate = 1 / 0.01  # 1/sample period (seconds) in omega software
 
 while 1:
-    cursor.execute('''SELECT relTime, temp1, temp2
-                      FROM Data1
+    time.sleep(SLEEP_TIME)
+
+    cursor.execute(f'''SELECT relTime, temp1, temp2
+                      FROM {TABLE_NAME}
                       ORDER BY relTime DESC
                       LIMIT ?''', (MAX_GRAPH_BUFFER,))
 
@@ -53,11 +60,11 @@ while 1:
     temps2 = [row[2] for row in results]
 
     # Fix timing for temps2
-    times2 = [x+0.68 for x in times1]
+    times2 = [x+TC_TIME_SHIFT for x in times1]
 
     # Data pre-processing for noise-reduction, signal smoothing, normalization by removing moving average
-    temps1_pr = ut.process_data(temps1, samplingRate, tempFrequency)
-    temps2_pr = ut.process_data(temps2, samplingRate, tempFrequency)
+    temps1_pr = ut.process_data(temps1, SAMPLING_RATE, TEMP_FREQUENCY)
+    temps2_pr = ut.process_data(temps2, SAMPLING_RATE, TEMP_FREQUENCY)
 
     # User input for points selection
     # points = np.round(np.array(plt.ginput(2))[:, 0])
@@ -65,14 +72,14 @@ while 1:
     # plt.close()
     # print(f'Time interval chosen = {points}')
 
-    params1, adjusted_r_squared1 = ut.fit_data(temps1_pr, times1, tempFrequency)
-    params2, adjusted_r_squared2 = ut.fit_data(temps2_pr, times2, tempFrequency)
+    params1, adjusted_r_squared1 = ut.fit_data(temps1_pr, times1, TEMP_FREQUENCY)
+    params2, adjusted_r_squared2 = ut.fit_data(temps2_pr, times2, TEMP_FREQUENCY)
     phaseShifts = [params1[2], params2[2]]
 
     # Continue with the remaining calculations
     M = 2 * params1[1]
     N = 2 * params2[1]
-    period = 1 / tempFrequency
+    period = 1 / TEMP_FREQUENCY
 
     if M < 0:
         phaseShifts[0] = phaseShifts[0] + period / 2
@@ -110,30 +117,29 @@ while 1:
     delta_time = phaseDifference
 
     # L = float(input('Enter the distance between thermocouples in cm: '))  # 0.72  Hardcoded value
-    L = .71
 
     diffusivity = L ** 2 / (2 * delta_time * np.log(M / N))
 
-    density = 1
-    specific_heat = 1
+    conductivity = diffusivity * DENSITY * SPECIFIC_HEAT
 
-    conductivity = diffusivity * density * specific_heat
-
+    print("")
     print(delta_time)
 
     print(f'R^2, Thermocouple 1 = {adjusted_r_squared1}')
     print(f'R^2, Thermocouple 2 = {adjusted_r_squared2}')
-    print(f'diffusivity = {diffusivity}')
-    print(f'conductivity = {conductivity}')
+    print(f'Diffusivity = {diffusivity}')
+    print(f'T. Conductivity = {conductivity}')
 
     line.set_data(times1, temps1_pr)
     line2.set_data(times2, temps2_pr)
 
     a1, b1, c1 = params1
-    y_fitted1 = a1 + b1 * np.sin(2 * np.pi * tempFrequency * (times1 + c1))  # TODO this is slow
+    y_fitted1 = a1 + b1 * np.sin(2 * np.pi * TEMP_FREQUENCY * (times1 + c1))
 
     a2, b2, c2 = params2
-    y_fitted2 = a2 + b2 * np.sin(2 * np.pi * tempFrequency * (times2 + c2))
+    y_fitted2 = a2 + b2 * np.sin(2 * np.pi * TEMP_FREQUENCY * (times2 + c2))
+
+    # TODO plot lines for M, N, delta_time
 
     lineF.set_data(times2, y_fitted1)
     line2F.set_data(times2, y_fitted2)

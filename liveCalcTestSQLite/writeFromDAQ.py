@@ -8,15 +8,17 @@ OPEN_CHANNELS = 2  # 2 TCs, opens 2 Channels + CJ = 3. Keep at 2.
 CHANNELS_TO_ADD = 6  # +6 TCs gets to 8 Channels open. Maximum of 6.
 CYCLES_UNTIL_LARGE_READ = 5
 TC_LAG = 0.068
+DATABASE_NAME = 'your_database.db'
+TABLE_NAME = "Data1"
 
 # Connect to the database
-conn = sqlite3.connect('your_database.db')
+conn = sqlite3.connect(DATABASE_NAME)
 
 # Create a cursor
 cursor = conn.cursor()
 
 # Create a table
-cursor.execute('''CREATE TABLE IF NOT EXISTS Data1 (
+cursor.execute(f'''CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
                 date_time TEXT DEFAULT CURRENT_TIMESTAMP,
                 relTime REAL NOT NULL,
                 temp1 REAL NOT NULL,
@@ -79,7 +81,7 @@ while 1:
         # Take Power Measurement
 
         # Insert Values
-        cursor.execute("INSERT INTO Data1 (relTime, temp1, temp2, temp3, temp4, temp5, temp6, temp7, temp8) "
+        cursor.execute(f"INSERT INTO {TABLE_NAME} (relTime, temp1, temp2, temp3, temp4, temp5, temp6, temp7, temp8) "
                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        (elapsed_time, temp[1], temp[2], temp[3], temp[4], temp[5], temp[6], temp[7], temp[8]))
 

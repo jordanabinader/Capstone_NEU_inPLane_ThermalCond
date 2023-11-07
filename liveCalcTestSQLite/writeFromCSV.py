@@ -3,11 +3,13 @@ import pandas as pd
 import utils as ut
 import time
 
-VALUES_TO_READ = 22000
+VALUES_TO_READ = 220000
 SLEEP_TIME = 1
+DATABASE_NAME = 'your_database.db'
+TABLE_NAME = "Data1"
 
 # Connect to the database
-conn = sqlite3.connect('your_database.db')
+conn = sqlite3.connect(DATABASE_NAME)
 
 # Create a cursor
 cursor = conn.cursor()
@@ -28,13 +30,17 @@ temps5 = list(df['TC5'])
 temps6 = list(df['TC6'])
 
 # Create a table
-cursor.execute('''CREATE TABLE IF NOT EXISTS Data1 (
+cursor.execute(f'''CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
                 date_time TEXT NOT NULL,
                 relTime REAL NOT NULL,
                 temp1 REAL NOT NULL,
                 temp2 REAL NOT NULL,
+                temp3 REAL,
+                temp4 REAL,
                 temp5 REAL,
                 temp6 REAL,
+                temp7 REAL,
+                temp8 REAL,
                 power REAL)''')
 
 for i in range(0, len(temps1), VALUES_TO_READ):
@@ -48,7 +54,7 @@ for i in range(0, len(temps1), VALUES_TO_READ):
 
     data_to_insert = list(zip(date_time, time1, temp1, temp2))
 
-    cursor.executemany("INSERT INTO Data1 (date_time, relTime, temp1, temp2) VALUES (?, ?, ?, ?)",
+    cursor.executemany(f"INSERT INTO {TABLE_NAME} (date_time, relTime, temp1, temp2) VALUES (?, ?, ?, ?)",
                        data_to_insert)
 
     # Commit the changes to the database
