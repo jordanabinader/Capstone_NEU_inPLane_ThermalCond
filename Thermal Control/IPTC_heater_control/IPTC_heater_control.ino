@@ -13,6 +13,8 @@
 #define HEATER_NOT_FOUND_ERROR 0x03
 #define HEATER0_HEADER 0x01
 #define HEATER1_HEADER 0x02
+#define HEATER0_INA260_HEADER 0x11
+#define HEATER1_INA260_HEADER 0x12
 
 
 unsigned long timer_start; //variable to time how long operations take
@@ -34,8 +36,8 @@ byte heaters_not_found;
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
 float heat0_duty = 0;
-float heat0_mV;
-float heat0_mA;
+unsigned long heat0_mV;
+unsigned long heat0_mA;
 RP2040_PWM* h0_pwm_inst;
 
 
@@ -44,8 +46,8 @@ RP2040_PWM* h0_pwm_inst;
 #define HEATER1_ALERT 10
 Adafruit_INA260 heat1 = Adafruit_INA260();
 float heat1_duty = 0;
-float heat1_mV;
-float heat1_mA;
+unsigned long heat1_mV;
+unsigned long heat1_mA;
 RP2040_PWM* h1_pwm_inst;
 
 
@@ -106,25 +108,30 @@ void loop() {
     last_read = millis();
     //Heater 0
     timer_start = millis();
-    heat0_mV = heat0.readBusVoltage();
-    heat0_mA = heat0.readCurrent();
-    Serial.print(millis()-timer_start);
-    Serial.println(" ms to read heater 0");
-    Serial.print("HVA,0,"); //Heater Voltage and Amperage in mV and mA, heater number
-    Serial.print(heat0_mV);
-    Serial.print(",");
-    Serial.println(heat0_mA);
-
+    
+    //Heater 0
+    heat0_mV = (unsigned long) heat0.readBusVoltage()*100;
+    heat0_mA = (unsigned long) heat0.readCurrent()*100;
+    serial_send_buf[0] = HEATER0_INA260_HEADER;
+    serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
+    serial_send_buf[2] = byte((heat0_mV>>8) & 0xFF);
+    serial_send_buf[3] = byte(heat0_mV & 0xFF);
+    serial_send_buf[4] = byte(heat0_mA>>16);
+    serial_send_buf[5] = byte((heat0_mA>>8) & 0xFF);
+    serial_send_buf[6] = byte(heat0_mA & 0xFF);
+    Serial.write(serial_send_buf, MSG_LEN);
+    
     //Heater 1
-    timer_start = millis();
-    heat1_mV = heat1.readBusVoltage();
-    heat1_mA = heat1.readCurrent();
-    Serial.print(millis()-timer_start);
-    Serial.println(" ms to read heater 0");
-    Serial.print("HVA,1,"); //Heater Voltage and Amperage in mV and mA, heater number. The current and voltage are a time averaged value so some math on the computer side is going to be required for fault analysis
-    Serial.print(heat1_mV);
-    Serial.print(",");
-    Serial.println(heat1_mA);
+    heat1_mV = (unsigned long) heat1.readBusVoltage()*100;
+    heat1_mA = (unsigned long) heat1.readCurrent()*100;
+    serial_send_buf[0] = HEATER0_INA260_HEADER;
+    serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
+    serial_send_buf[2] = byte((heat1_mV>>8) & 0xFF);
+    serial_send_buf[3] = byte(heat1_mV & 0xFF);
+    serial_send_buf[4] = byte(heat1_mA>>16);
+    serial_send_buf[5] = byte((heat1_mA>>8) & 0xFF);
+    serial_send_buf[6] = byte(heat1_mA & 0xFF);
+    Serial.write(serial_send_buf, MSG_LEN);
   }
 
 }
