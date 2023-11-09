@@ -5,7 +5,7 @@ import time
 import sqlite3
 
 MAX_GRAPH_BUFFER = 100000  # Limit amount of data points to be graphed, ~100,000
-TC_TIME_SHIFT = 0.68  # Time difference between TCsYou will be measuring velocity with the Pitot tube
+TC_TIME_SHIFT = 0.68  # Time difference between TCs
 SLEEP_TIME = 1
 DENSITY = 1
 SPECIFIC_HEAT = 1
