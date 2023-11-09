@@ -9,14 +9,25 @@
 #include <Adafruit_INA260.h>
 #include "RP2040_PWM.h" //Custom, not the library by Khoi Hoang due to it being archived and not tracking latest changes in Arduino Mbed OS RP2040 Boards, changes made using directions found here: https://forum.arduino.cc/t/library-rp2040-pwm-dont-compile/1168488/2 
 
+// Communication Headers, see Serial Communication Pattern.md
+#define HEATER_NOT_FOUND_ERROR 0x03
+#define HEATER0_HEADER 0x01
+#define HEATER1_HEADER 0x02
+
+
 unsigned long timer_start; //variable to time how long operations take
 
 float pwm_freq = 1100; //Hz
 
 
+#define MSG_LEN 9
+byte serial_rec_buf[MSG_LEN]; // For serial data coming in
+byte serial_send_buf[MSG_LEN];
+
 #define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
 
+byte heaters_not_found;
 
 // Heater 0 Info
 #define HEATER0 10 //not the GPxx number but the physical pin number
@@ -41,8 +52,7 @@ RP2040_PWM* h1_pwm_inst;
 
 void setup() {
   //PWM Initialization
-  // analogWriteFreq(1000); //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time, doesn't work using arduino mbed OS RP2040
-  // analogWriteResolution(16); Might be necessary for higher resolution control, but not necessary rn
+  //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time, doesn't work using arduino mbed OS RP2040
   pinMode(HEATER0, OUTPUT);
   pinMode(HEATER1, OUTPUT);
 
@@ -55,26 +65,33 @@ void setup() {
   //INA Initialization
   //INA260 conversion time (the lenth the sensor averages over) needs to be as close to the period (or multiple periods) of the pwm_freq as possible to get an accuracte average for fault detection
   if (!heat0.begin(0x40)) {
-    Serial.println("Error: Heater 0 INA260 Not Found");
+    heaters_not_found = heaters_not_found&0B1;
+  }
+  if (!heat1.begin(0x41)) { 
+    heaters_not_found = heaters_not_found&0B01;
     while(1);
   }
+  if(heaters_not_found>0) { //If any heaters aren't found send error and then halt
+    serial_send_buf[0] = HEATER_NOT_FOUND_ERROR;
+    serial_send_buf[1] = heaters_not_found;
+    Serial.write(serial_send_buf, MSG_LEN);
+    memset(serial_send_buf, 0, MSG_LEN); // Empty the array for the next message to send
+    while(1);
+  }
+
+  //If the code gets to this point, all heaters have been verified to be opertational
+  //Set heater conversion time to match up with PWM frequency to ensure that we are getting the expected results
   heat0.setCurrentConversionTime(INA260_TIME_1_1_ms);
   heat0.setVoltageConversionTime(INA260_TIME_1_1_ms);
-  
-  if (!heat1.begin(0x41)) { 
-    Serial.println("Error: Heater 1 INA260 Not Found");
-    while(1);
-  }
   heat1.setCurrentConversionTime(INA260_TIME_1_1_ms);
   heat1.setVoltageConversionTime(INA260_TIME_1_1_ms);
 
   //PWM Initialization
+  //Pico can handle 8Hz - 62.5MHz, IRLB8721 maxes out around 4.8MHz due to delay time and rise time, doesn't work using arduino mbed OS RP2040
   h0_pwm_inst = new RP2040_PWM(HEATER0, pwm_freq, heat0_duty);
   h0_pwm_inst->setPWM();
   h1_pwm_inst = new RP2040_PWM(HEATER1, pwm_freq, heat1_duty);
   h1_pwm_inst->setPWM();
-
-  
 
 }
 
@@ -82,8 +99,8 @@ void loop() {
   //Handle Incoming serial data
   // Pyserial in the handler code is good at handling all sorts of data that the arduino can send
   // however the reverse isn't true, so going to in a standard form
-  if (Serial.available() > 1) {
-    in_str_handler(Serial.readString());
+  if (Serial.available() > 0) {
+    serial_handler();
   }
   if ((millis()-last_read)>INA260_READ_PERIOD) { //This could hopefully get refined if we can track the state of the PWM pulses
     last_read = millis();
@@ -112,37 +129,22 @@ void loop() {
 
 }
 
-void in_str_handler(String in_str) {
-  in_str.toLowerCase(); //making sure no issues arise with capitalization
-  Serial.print("Received: ");
-  Serial.println(in_str);
-
-  // Seaches for all commas in the message string, format similar to NMEA messages for GPS
-  int splits[10];
-  splits[0] = 0;
-  int i = 1;
-  while (splits[i-1] >= 0) {
-    splits[i] = in_str.indexOf(",", splits[i-1]+1);
-    i++;
-  }
-  
-  //Changing Heater PWM Setting
-  if (in_str.substring(0, splits[1])== "hpwm") {
-    Serial.println("Inside hpwm");
-    //Heater 1
-    if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 0
-      Serial.println("Inside Heater 0");
-      heat0_duty = in_str.substring(splits[2]+1, splits[3]).toFloat();
+void serial_handler() {
+  Serial.readBytes(serial_rec_buf, MSG_LEN); //Reads MSG_LEN bytes sent by computer following format in Serial Communication Pattern.md
+  switch (serial_rec_buf[0]) {
+    case HEATER0_HEADER: // Heater 0 Duty Cycle Change
+      heat0_duty = float((serial_rec_buf[1]<<8)|serial_rec_buf[2])*0.01; 
       h0_pwm_inst->setPWM(HEATER0, pwm_freq, heat0_duty);
-    } else if (in_str.substring(splits[1]+1, splits[2]).toInt() == 0) { //Heater 1
-      heat1_duty = in_str.substring(splits[2]+1, splits[3]).toFloat();
+      Serial.print("Heater 0 Duty Cycle change to ");
+      Serial.println(heat0_duty);
+      break;
+    case HEATER1_HEADER: //Heater 1 Duty Cycle Change
+      heat1_duty = float((serial_rec_buf[1]<<8)|serial_rec_buf[2])*0.01; 
       h1_pwm_inst->setPWM(HEATER1, pwm_freq, heat1_duty);
-    }
+      Serial.print("Heater 1 Duty Cycle change to ");
+      Serial.println(heat1_duty);
+      break;
   }
-
-  
-  
-
-
-
 }
+
+
