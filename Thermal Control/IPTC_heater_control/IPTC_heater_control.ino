@@ -11,11 +11,12 @@
 
 unsigned long timer_start; //variable to time how long operations take
 
-float pwm_freq = 500; //Hz
+float pwm_freq = 1100; //Hz
 
 
 #define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
+
 
 // Heater 0 Info
 #define HEATER0 10 //not the GPxx number but the physical pin number
@@ -52,14 +53,20 @@ void setup() {
   }
 
   //INA Initialization
+  //INA260 conversion time (the lenth the sensor averages over) needs to be as close to the period (or multiple periods) of the pwm_freq as possible to get an accuracte average for fault detection
   if (!heat0.begin(0x40)) {
     Serial.println("Error: Heater 0 INA260 Not Found");
     while(1);
   }
+  heat0.setCurrentConversionTime(INA260_TIME_1_1_ms);
+  heat0.setVoltageConversionTime(INA260_TIME_1_1_ms);
+  
   if (!heat1.begin(0x41)) { 
     Serial.println("Error: Heater 1 INA260 Not Found");
     while(1);
   }
+  heat1.setCurrentConversionTime(INA260_TIME_1_1_ms);
+  heat1.setVoltageConversionTime(INA260_TIME_1_1_ms);
 
   //PWM Initialization
   h0_pwm_inst = new RP2040_PWM(HEATER0, pwm_freq, heat0_duty);
