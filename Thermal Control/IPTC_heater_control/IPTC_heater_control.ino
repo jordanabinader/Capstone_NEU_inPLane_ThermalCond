@@ -102,7 +102,7 @@ void loop() {
   // Pyserial in the handler code is good at handling all sorts of data that the arduino can send
   // however the reverse isn't true, so going to in a standard form
   if (Serial.available() > 0) {
-    serial_handler();
+    serial_recv_handler();
   }
   if ((millis()-last_read)>INA260_READ_PERIOD) { //This could hopefully get refined if we can track the state of the PWM pulses
     last_read = millis();
@@ -136,7 +136,7 @@ void loop() {
 
 }
 
-void serial_handler() {
+void serial_recv_handler() {
   Serial.readBytes(serial_rec_buf, MSG_LEN); //Reads MSG_LEN bytes sent by computer following format in Serial Communication Pattern.md
   switch (serial_rec_buf[0]) {
     case HEATER0_HEADER: // Heater 0 Duty Cycle Change
