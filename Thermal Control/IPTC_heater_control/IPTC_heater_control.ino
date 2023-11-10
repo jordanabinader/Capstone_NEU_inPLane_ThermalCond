@@ -15,7 +15,7 @@
 #define HEATER1_HEADER 0x02
 #define HEATER0_INA260_HEADER 0x11
 #define HEATER1_INA260_HEADER 0x12
-#define TERMINATION 0x99
+#define TERMINATION 0xff
 
 
 unsigned long timer_start; //variable to time how long operations take
