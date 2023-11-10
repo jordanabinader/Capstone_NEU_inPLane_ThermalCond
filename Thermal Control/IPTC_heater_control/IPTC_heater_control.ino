@@ -15,6 +15,7 @@
 #define HEATER1_HEADER 0x02
 #define HEATER0_INA260_HEADER 0x11
 #define HEATER1_INA260_HEADER 0x12
+#define TERMINATION 0x99
 
 
 unsigned long timer_start; //variable to time how long operations take
@@ -22,7 +23,7 @@ unsigned long timer_start; //variable to time how long operations take
 float pwm_freq = 1100; //Hz
 
 
-#define MSG_LEN 9
+#define MSG_LEN 8
 byte serial_rec_buf[MSG_LEN]; // For serial data coming in
 byte serial_send_buf[MSG_LEN];
 
@@ -76,6 +77,7 @@ void setup() {
   if(heaters_not_found>0) { //If any heaters aren't found send error and then halt
     serial_send_buf[0] = HEATER_NOT_FOUND_ERROR;
     serial_send_buf[1] = heaters_not_found;
+    serial_send_buf[MSG_LEN-1] = TERMINATION;
     Serial.write(serial_send_buf, MSG_LEN);
     memset(serial_send_buf, 0, MSG_LEN); // Empty the array for the next message to send
     while(1);
@@ -119,6 +121,7 @@ void loop() {
     serial_send_buf[4] = byte(heat0_mA>>16);
     serial_send_buf[5] = byte((heat0_mA>>8) & 0xFF);
     serial_send_buf[6] = byte(heat0_mA & 0xFF);
+    serial_send_buf[MSG_LEN-1] = TERMINATION;
     Serial.write(serial_send_buf, MSG_LEN);
     
     //Heater 1
@@ -131,6 +134,7 @@ void loop() {
     serial_send_buf[4] = byte(heat1_mA>>16);
     serial_send_buf[5] = byte((heat1_mA>>8) & 0xFF);
     serial_send_buf[6] = byte(heat1_mA & 0xFF);
+    serial_send_buf[MSG_LEN-1] = TERMINATION;
     Serial.write(serial_send_buf, MSG_LEN);
   }
 
