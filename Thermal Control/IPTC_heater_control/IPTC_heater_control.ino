@@ -114,15 +114,19 @@ void loop() {
     //Heater 0
     heat0_mV = (unsigned long) heat0.readBusVoltage()*100;
     heat0_mA = (unsigned long) heat0.readCurrent()*100;
-    serial_send_buf[0] = HEATER0_INA260_HEADER;
-    serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
-    serial_send_buf[2] = byte((heat0_mV>>8) & 0xFF);
-    serial_send_buf[3] = byte(heat0_mV & 0xFF);
-    serial_send_buf[4] = byte(heat0_mA>>16);
-    serial_send_buf[5] = byte((heat0_mA>>8) & 0xFF);
-    serial_send_buf[6] = byte(heat0_mA & 0xFF);
-    serial_send_buf[MSG_LEN-1] = TERMINATION;
-    Serial.write(serial_send_buf, MSG_LEN);
+    // serial_send_buf[0] = HEATER0_INA260_HEADER;
+    // serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
+    // serial_send_buf[2] = byte((heat0_mV>>8) & 0xFF);
+    // serial_send_buf[3] = byte(heat0_mV & 0xFF);
+    // serial_send_buf[4] = byte(heat0_mA>>16);
+    // serial_send_buf[5] = byte((heat0_mA>>8) & 0xFF);
+    // serial_send_buf[6] = byte(heat0_mA & 0xFF);
+    // serial_send_buf[MSG_LEN-1] = TERMINATION;
+    // Serial.write(serial_send_buf, MSG_LEN);
+    Serial.print("H0");
+    Serial.print(heat0_mV);
+    Serial.print(",");
+    Serial.println(heat0_mA);
     
     //Heater 1
     heat1_mV = (unsigned long) heat1.readBusVoltage()*100;

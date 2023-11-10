@@ -7,6 +7,7 @@ import argparse
 import atexit
 import sqlite3
 import re
+import time
 # import asyncio
 # import serial_asyncio #Tutorial used: https://tinkering.xyz/async-serial/
 
@@ -107,13 +108,16 @@ if __name__ == "__main__":
     pat = rb'[\x11\x12].{6}\xff'
     ser_recv_buf = bytes()
     while True:
-        if mc.in_waiting > MSG_LEN:
-            ser_recv_buf += mc.read(8)
-            match = re.search(pat, ser_recv_buf)
-            if match is not None:
-                # print(ser_recv_buf)
-                parseMsg(match.group(0))
-                ser_recv_buf = ser_recv_buf[match.end():] # Remove up most recent match
+        if mc.in_waiting > 0:
+            ser_recv_buf += mc.readline()
+            print(ser_recv_buf)
+            # mc.reset_input_buffer()
+            # time.sleep(0.5)
+            # match = re.search(pat, ser_recv_buf)
+            # if match is not None:
+            #     # print(ser_recv_buf)
+            #     parseMsg(match.group(0))
+            #     ser_recv_buf = ser_recv_buf[match.end():] # Remove up most recent match
         
 
 
