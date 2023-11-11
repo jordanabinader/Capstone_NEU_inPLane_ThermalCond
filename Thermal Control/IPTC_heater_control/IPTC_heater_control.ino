@@ -32,13 +32,16 @@ unsigned long last_read = 0;
 
 byte heaters_not_found;
 
+unsigned long ina_mV;
+unsigned long ina_mA;
+float read_mA;
+
+
 // Heater 0 Info
 #define HEATER0 10 //not the GPxx number but the physical pin number
 #define HEATER0_ALERT 9
 Adafruit_INA260 heat0 = Adafruit_INA260();
 float heat0_duty = 0;
-unsigned long heat0_mV;
-unsigned long heat0_mA;
 RP2040_PWM* h0_pwm_inst;
 
 
@@ -47,8 +50,6 @@ RP2040_PWM* h0_pwm_inst;
 #define HEATER1_ALERT 10
 Adafruit_INA260 heat1 = Adafruit_INA260();
 float heat1_duty = 0;
-unsigned long heat1_mV;
-unsigned long heat1_mA;
 RP2040_PWM* h1_pwm_inst;
 
 
@@ -106,38 +107,33 @@ void loop() {
   if (Serial.available() > 0) {
     serial_recv_handler();
   }
-  if ((millis()-last_read)>INA260_READ_PERIOD) { //This could hopefully get refined if we can track the state of the PWM pulses
+  if ((millis()-last_read)>INA260_READ_PERIOD) {
     last_read = millis();
     //Heater 0
-    timer_start = millis();
-    
-    //Heater 0
-    heat0_mV = (unsigned long) heat0.readBusVoltage()*100;
-    heat0_mA = (unsigned long) heat0.readCurrent()*100;
-    // serial_send_buf[0] = HEATER0_INA260_HEADER;
-    // serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
-    // serial_send_buf[2] = byte((heat0_mV>>8) & 0xFF);
-    // serial_send_buf[3] = byte(heat0_mV & 0xFF);
-    // serial_send_buf[4] = byte(heat0_mA>>16);
-    // serial_send_buf[5] = byte((heat0_mA>>8) & 0xFF);
-    // serial_send_buf[6] = byte(heat0_mA & 0xFF);
-    // serial_send_buf[MSG_LEN-1] = TERMINATION;
-    // Serial.write(serial_send_buf, MSG_LEN);
-    Serial.print("H0");
-    Serial.print(heat0_mV);
-    Serial.print(",");
-    Serial.println(heat0_mA);
+    ina_mV = (unsigned long) heat0.readBusVoltage()*100;
+    read_mA = heat0.readCurrent();
+    ina_mA = (unsigned long) (read_mA <0 ) ? 0 : read_mA*100; //If current is negative, send 0, the negative current is really only sent when there is no current flowing and is an indicator of noise, and its so small we dont care
+    serial_send_buf[0] = HEATER0_INA260_HEADER;
+    serial_send_buf[1] = byte((ina_mV>>16));
+    serial_send_buf[2] = byte((ina_mV>>8) );
+    serial_send_buf[3] = byte(ina_mV );
+    serial_send_buf[4] = byte(ina_mA>>16);
+    serial_send_buf[5] = byte((ina_mA>>8) );
+    serial_send_buf[6] = byte(ina_mA );
+    serial_send_buf[MSG_LEN-1] = TERMINATION;
+    Serial.write(serial_send_buf, MSG_LEN);
     
     //Heater 1
-    heat1_mV = (unsigned long) heat1.readBusVoltage()*100;
-    heat1_mA = (unsigned long) heat1.readCurrent()*100;
-    serial_send_buf[0] = HEATER0_INA260_HEADER;
-    serial_send_buf[1] = byte((heat0_mV>>16)& 0xFF);
-    serial_send_buf[2] = byte((heat1_mV>>8) & 0xFF);
-    serial_send_buf[3] = byte(heat1_mV & 0xFF);
-    serial_send_buf[4] = byte(heat1_mA>>16);
-    serial_send_buf[5] = byte((heat1_mA>>8) & 0xFF);
-    serial_send_buf[6] = byte(heat1_mA & 0xFF);
+    ina_mV = (unsigned long) heat1.readBusVoltage()*100;
+    read_mA = heat1.readCurrent();
+    ina_mA = (unsigned long) (read_mA <0 ) ? 0 : read_mA*100;
+    serial_send_buf[0] = HEATER1_INA260_HEADER;
+    serial_send_buf[1] = byte((ina_mV>>16));
+    serial_send_buf[2] = byte((ina_mV>>8) );
+    serial_send_buf[3] = byte(ina_mV );
+    serial_send_buf[4] = byte(ina_mA>>16);
+    serial_send_buf[5] = byte((ina_mA>>8) );
+    serial_send_buf[6] = byte(ina_mA );
     serial_send_buf[MSG_LEN-1] = TERMINATION;
     Serial.write(serial_send_buf, MSG_LEN);
   }
