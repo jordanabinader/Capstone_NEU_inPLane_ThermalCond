@@ -10,7 +10,7 @@
 #include "RP2040_PWM.h" //Custom, not the library by Khoi Hoang due to it being archived and not tracking latest changes in Arduino Mbed OS RP2040 Boards, changes made using directions found here: https://forum.arduino.cc/t/library-rp2040-pwm-dont-compile/1168488/2 
 
 // Communication Headers, see Serial Communication Pattern.md
-#define HEATER_NOT_FOUND_ERROR 0x03
+#define HEATER_NOT_FOUND_ERROR 0x21
 #define HEATER0_HEADER 0x01
 #define HEATER1_HEADER 0x02
 #define HEATER0_INA260_HEADER 0x11

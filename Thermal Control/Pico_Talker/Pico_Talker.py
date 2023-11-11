@@ -10,7 +10,7 @@ import aiosqlite
 
 #Serial Communication Constants (see Serial Communication Pattern.md)
 MSG_LEN = 8
-HEATER_NOT_FOUND_ERROR = 0x03
+HEATER_NOT_FOUND_ERROR = 0x21
 HEATER0_HEADER = 0x01
 HEATER1_HEADER = 0x02
 HEATER0_INA260_HEADER = 0x11
