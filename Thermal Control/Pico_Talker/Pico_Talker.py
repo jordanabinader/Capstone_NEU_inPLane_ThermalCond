@@ -7,14 +7,24 @@ import re
 import asyncio
 import serial_asyncio #Tutorial used: https://tinkering.xyz/async-serial/
 import aiosqlite
+from collections.abc import Iterable
+import time
+import math
 
 #Serial Communication Constants (see Serial Communication Pattern.md)
 MSG_LEN = 8
 HEATER_NOT_FOUND_ERROR = 0x21
-DUTY_CYCLE_CHANGE_HEADER = (0x01, 0x02)
+DUTY_CYCLE_CHANGE_HEADER = (0x01, 0x02, 0x03) # Heater 1, Heater 2, Both Heaters
 INA260_DATA_HEADER = (0x11, 0x12)
 TERMINATION = 0xff
-DUTY_CYCLE_UPDATE_PERIOD = 1/5 # Seconds
+DUTY_CYCLE_UPDATE_PERIOD = 0.5 # Seconds
+
+#Data to be collected from SQLite Database
+control_mode = 0 #0: Power Sine, 1: Temperature
+control_freq = 0.1 #Hz, desired frequency of the output curve whether that is power or temperature
+duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
+control_amplitude = 1 #Amplitude, either in Watts or degrees celcius depending on control mode
+
 
 ACCEPTABLE_MSG_HEADERS = bytes() #Flatten acceptable headers, for use in parsing serial messages
 for h in [DUTY_CYCLE_CHANGE_HEADER, INA260_DATA_HEADER, HEATER_NOT_FOUND_ERROR]:
@@ -25,24 +35,22 @@ for h in [DUTY_CYCLE_CHANGE_HEADER, INA260_DATA_HEADER, HEATER_NOT_FOUND_ERROR]:
         ACCEPTABLE_MSG_HEADERS += h.to_bytes()
 
 
-# class SerialWriter(asyncio.Protocol):
-#     def connection_made(self, transport):
-#         self.transport = transport
-#         print("SerialWriter Connection Created")
+HEATERS = (0, 1) # Mapping for heater numbers
+HEATER_RESISTANCE = (0.05, 0.06) #Ohms, (heater 0, heater 1), measured value, as different heaters are going to have different resistances
+HEATER_SCALAR = (1, 1) #(heater 0, heater 1),heaters are going to have different thermal masses as bottom heater has more to heat up so having a scalar would allow both blocks to heat similarly
+SUPPLY_VOLTAGE = 12 #Volts
+time_start = time.time()
 
-#     def connection_lost(self, exc):
-#         print("SerialWriter Closed")
-    
-#     async def send(self):
-#         return
-    
-class SerialReader(asyncio.Protocol):
-    def connection_made(self, transport):
+   
+class SerialComm(asyncio.Protocol):
+    def connection_made(self, transport:serial_asyncio.SerialTransport):
         self.transport = transport
         self.pat = b'['+ACCEPTABLE_MSG_HEADERS+b'].{'+str(MSG_LEN-2).encode()+b'}'+TERMINATION.to_bytes()
         self.read_buf = bytes()
         self.bytes_recv = 0
+        self.msg = bytearray(MSG_LEN)
         print("SerialReader Connection Created")
+        asyncio.ensure_future(self.power_control())
 
     def connection_lost(self, exc):
         print("SerialReader Closed")
@@ -59,16 +67,41 @@ class SerialReader(asyncio.Protocol):
                     mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
                     mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
                     print(f"Heater 1: {mV} mV | {mA} mA")
-
     
     def data_received(self, data):
-        self.read_buf += data
-        if len(self.read_buf)>= MSG_LEN:
-            match = re.search(self.pat, self.read_buf)
-            if match is not None:
-                # print(ser_recv_buf)
-                self.parseMsg(match.group(0))
-                self.read_buf = self.read_buf[match.end():] # Remove up most recent match
+        print(repr(data))
+        # self.read_buf += data
+        # if len(self.read_buf)>= MSG_LEN:
+        #     match = re.search(self.pat, self.read_buf)
+        #     if match is not None:
+        #         # print(ser_recv_buf)
+        #         self.parseMsg(match.group(0))
+        #         self.read_buf = self.read_buf[match.end():] # Remove up most recent match
+
+    async def power_control(self):
+        while True:
+            await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
+            curr_time = time.time()
+            for heater in HEATERS:
+                duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
+            
+            self.sendDutyCycleMsg(2)
+            print(f"Time: {curr_time-time_start} Heater 0: {duty_cycle[0]} Heater 1: {duty_cycle[1]}")
+            
+
+    def sendDutyCycleMsg(self, heater:int):
+        self.msg[0] = DUTY_CYCLE_CHANGE_HEADER[heater]
+        if heater == 2: #Send duty cycle update to both heaters
+            self.msg[1:4] = int(duty_cycle[0]*1000).to_bytes(3)
+            self.msg[4:7] = int(duty_cycle[1]*1000).to_bytes(3)
+        else:
+            self.msg[1:4] = int(duty_cycle[heater]*1000).to_bytes(3)
+
+        self.sendMsg()
+
+    def sendMsg(self):
+        self.transport.write(self.msg)
+        return
 
 
 #AIOSQLITE
@@ -93,12 +126,9 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
 
     #initalize Serial Asyncio reader and writer
-    reader = serial_asyncio.create_serial_connection(loop, SerialReader, port, baudrate=baud)
-    # writer = serial_asyncio.create_serial_connection(loop, SerialWriter, port, baudrate=baud)
-    asyncio.ensure_future(reader)
-    print("SerialReader Scheduled")
-    # asyncio.ensure_future(writer)
-    # print("SerialWriter Scheduled")
+    serial_coro = serial_asyncio.create_serial_connection(loop, SerialComm, port, baudrate=baud)
+    asyncio.ensure_future(serial_coro)
+    print("SerialComm Scheduled")
     loop.call_later(10, loop.stop)
     loop.run_forever()
 
