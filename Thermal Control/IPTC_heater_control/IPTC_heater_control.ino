@@ -11,8 +11,9 @@
 
 // Communication Headers, see Serial Communication Pattern.md
 #define HEATER_NOT_FOUND_ERROR 0x21
-#define HEATER0_HEADER 0x01
-#define HEATER1_HEADER 0x02
+#define HEATER0_DC_HEADER 0x01
+#define HEATER1_DC_HEADER 0x02
+#define DUAL_DC_HEADER 0x03
 #define HEATER0_INA260_HEADER 0x11
 #define HEATER1_INA260_HEADER 0x12
 #define TERMINATION 0xff
@@ -27,7 +28,7 @@ float pwm_freq = 1100; //Hz
 byte serial_rec_buf[MSG_LEN]; // For serial data coming in
 byte serial_send_buf[MSG_LEN];
 
-#define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
+#define INA260_READ_PERIOD 300000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
 
 byte heaters_not_found;
@@ -142,20 +143,33 @@ void loop() {
 
 void serial_recv_handler() {
   Serial.readBytes(serial_rec_buf, MSG_LEN); //Reads MSG_LEN bytes sent by computer following format in Serial Communication Pattern.md
+  // Serial.println("Received msg");
   switch (serial_rec_buf[0]) {
-    case HEATER0_HEADER: // Heater 0 Duty Cycle Change
-      heat0_duty = float((serial_rec_buf[1]<<8)|serial_rec_buf[2])*0.01; 
+    case HEATER0_DC_HEADER: // Heater 0 Duty Cycle Change
+      heat0_duty = float((((serial_rec_buf[1]<<8)|serial_rec_buf[2])<<8)|serial_rec_buf[3])*0.001;  
       h0_pwm_inst->setPWM(HEATER0, pwm_freq, heat0_duty);
-      Serial.print("Heater 0 Duty Cycle change to ");
-      Serial.println(heat0_duty);
+      // Serial.print("Heater 0 Duty Cycle change to ");
+      // Serial.println(heat0_duty);
       break;
-    case HEATER1_HEADER: //Heater 1 Duty Cycle Change
-      heat1_duty = float((serial_rec_buf[1]<<8)|serial_rec_buf[2])*0.01; 
+    case HEATER1_DC_HEADER: //Heater 1 Duty Cycle Change
+      heat1_duty = float((((serial_rec_buf[1]<<8)|serial_rec_buf[2])<<8)|serial_rec_buf[3])*0.001; 
       h1_pwm_inst->setPWM(HEATER1, pwm_freq, heat1_duty);
-      Serial.print("Heater 1 Duty Cycle change to ");
-      Serial.println(heat1_duty);
+      // Serial.print("Heater 1 Duty Cycle change to ");
+      // Serial.println(heat1_duty);
       break;
+    case DUAL_DC_HEADER:
+      heat0_duty = float((((serial_rec_buf[1]<<8)|serial_rec_buf[2])<<8)|serial_rec_buf[3])*0.001; 
+      h0_pwm_inst->setPWM(HEATER0, pwm_freq, heat0_duty);
+      // Serial.print("Heater 0 Duty Cycle change to ");
+      // Serial.println(heat0_duty, 3);
+      heat1_duty = float((((serial_rec_buf[4]<<8)|serial_rec_buf[5])<<8)|serial_rec_buf[6])*0.001; 
+      h1_pwm_inst->setPWM(HEATER1, pwm_freq, heat1_duty);
+      // Serial.print("Heater 1 Duty Cycle change to ");
+      // Serial.println(heat1_duty, 3);
+
+
   }
+
 }
 
 
