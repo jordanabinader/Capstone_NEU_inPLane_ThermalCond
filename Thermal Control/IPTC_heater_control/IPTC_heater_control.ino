@@ -28,7 +28,7 @@ float pwm_freq = 1100; //Hz
 byte serial_rec_buf[MSG_LEN]; // For serial data coming in
 byte serial_send_buf[MSG_LEN];
 
-#define INA260_READ_PERIOD 300000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
+#define INA260_READ_PERIOD 2000 //In milliseconds. In order to read the current flowing through the heater, the mosfet needs to be in the on state and hitting the time in the duty cycle when the PWM is high is difficult without getting into the register and haven't figured out how to do that yet
 unsigned long last_read = 0;
 
 byte heaters_not_found;

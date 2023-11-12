@@ -1,8 +1,5 @@
 import Serial_Helper
-import serial
-from serial.threaded import ReaderThread, Protocol
 import argparse
-import sqlite3
 import re
 import asyncio
 import serial_asyncio #Tutorial used: https://tinkering.xyz/async-serial/
@@ -10,6 +7,7 @@ import aiosqlite
 from collections.abc import Iterable
 import time
 import math
+from functools import partial
 
 #Serial Communication Constants (see Serial Communication Pattern.md)
 MSG_LEN = 8
@@ -41,8 +39,12 @@ HEATER_SCALAR = (1, 1) #(heater 0, heater 1),heaters are going to have different
 SUPPLY_VOLTAGE = 12 #Volts
 time_start = time.time()
 
-   
 class SerialComm(asyncio.Protocol):
+    def __init__(self, power_queue:asyncio.Queue):
+        super().__init__()
+        self.transport = None
+        self.power_queue = power_queue
+
     def connection_made(self, transport:serial_asyncio.SerialTransport):
         self.transport = transport
         self.pat = b'['+ACCEPTABLE_MSG_HEADERS+b'].{'+str(MSG_LEN-2).encode()+b'}'+TERMINATION.to_bytes()
@@ -55,28 +57,30 @@ class SerialComm(asyncio.Protocol):
     def connection_lost(self, exc):
         print("SerialReader Closed")
     
-    def parseMsg(self, msg:bytes):
+    async def parseMsg(self, msg:bytes):
         if msg[MSG_LEN-1] == TERMINATION: #Make sure the messages line up properly
             # print(msg)
             match msg[0]:
                 case INA260_DATA_HEADER(0): #INA260 Data Heater 0
                     mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
                     mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
+                    await self.power_queue.put((0, mV, mA, duty_cycle[0], time.time())) #This might cause some issues if the queue isn't cleared regularly enough
                     print(f"Heater 0: {mV} mV | {mA} mA")
                 case INA260_DATA_HEADER(1): #INA260 Data Heater 0
                     mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
                     mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
                     print(f"Heater 1: {mV} mV | {mA} mA")
+                    await self.power_queue.put((1, mV, mA, duty_cycle[1], time.time())) #This might cause some issues if the queue isn't cleared regularly enough
     
-    def data_received(self, data):
-        print(repr(data))
-        # self.read_buf += data
-        # if len(self.read_buf)>= MSG_LEN:
-        #     match = re.search(self.pat, self.read_buf)
-        #     if match is not None:
-        #         # print(ser_recv_buf)
-        #         self.parseMsg(match.group(0))
-        #         self.read_buf = self.read_buf[match.end():] # Remove up most recent match
+    async def data_received(self, data):
+        # print(repr(data))
+        self.read_buf += data
+        if len(self.read_buf)>= MSG_LEN:
+            match = re.search(self.pat, self.read_buf)
+            if match is not None:
+                # print(ser_recv_buf)
+                await self.parseMsg(match.group(0))
+                self.read_buf = self.read_buf[match.end():] # Remove up most recent match
 
     async def power_control(self):
         while True:
@@ -125,6 +129,9 @@ if __name__ == "__main__":
    
     loop = asyncio.get_event_loop()
 
+    #Create required Queues
+    power_queue = asyncio.Queue() #Power queue items should be a tuple with the following structure: (Heater Number, mV, mA, duty cycle, time)
+    serial_with_queue = partial(SerialComm, power_queue = power_queue)
     #initalize Serial Asyncio reader and writer
     serial_coro = serial_asyncio.create_serial_connection(loop, SerialComm, port, baudrate=baud)
     asyncio.ensure_future(serial_coro)
