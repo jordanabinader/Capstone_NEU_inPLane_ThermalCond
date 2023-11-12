@@ -48,6 +48,7 @@ class SerialComm(asyncio.Protocol):
     def connection_made(self, transport:serial_asyncio.SerialTransport):
         self.transport = transport
         self.pat = b'['+ACCEPTABLE_MSG_HEADERS+b'].{'+str(MSG_LEN-2).encode()+b'}'+TERMINATION.to_bytes()
+        print(self.pat)
         self.read_buf = bytes()
         self.bytes_recv = 0
         self.msg = bytearray(MSG_LEN)
@@ -58,29 +59,30 @@ class SerialComm(asyncio.Protocol):
         print("SerialReader Closed")
     
     async def parseMsg(self, msg:bytes):
-        if msg[MSG_LEN-1] == TERMINATION: #Make sure the messages line up properly
-            # print(msg)
-            match msg[0]:
-                case INA260_DATA_HEADER(0): #INA260 Data Heater 0
-                    mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
-                    mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
-                    await self.power_queue.put((0, mV, mA, duty_cycle[0], time.time())) #This might cause some issues if the queue isn't cleared regularly enough
-                    print(f"Heater 0: {mV} mV | {mA} mA")
-                case INA260_DATA_HEADER(1): #INA260 Data Heater 0
-                    mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
-                    mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
-                    print(f"Heater 1: {mV} mV | {mA} mA")
-                    await self.power_queue.put((1, mV, mA, duty_cycle[1], time.time())) #This might cause some issues if the queue isn't cleared regularly enough
+        if msg[0] == INA260_DATA_HEADER[0]: #INA260 Data Heater 0
+            mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
+            mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
+            print(f"Heater 0: {mV} mV | {mA} mA")
+            await self.power_queue.put([0, mV, mA, duty_cycle[0], time.time()]) #This might cause some issues if the queue isn't cleared regularly enoughprint(f"Heater 0: {mV} mV | {mA} mA")
+        elif msg[0] == INA260_DATA_HEADER[1]: #INA260 Data Heater 1
+            mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
+            mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
+            print(f"Heater 1: {mV} mV | {mA} mA")
+            await self.power_queue.put([1, mV, mA, duty_cycle[1], time.time()]) #This might cause some issues if the queue isn't cleared regularly enough
     
-    async def data_received(self, data):
-        # print(repr(data))
+    def data_received(self, data):
+        # print("Reached Data Recieved")
         self.read_buf += data
+        # print(self.read_buf)
         if len(self.read_buf)>= MSG_LEN:
-            match = re.search(self.pat, self.read_buf)
-            if match is not None:
-                # print(ser_recv_buf)
-                await self.parseMsg(match.group(0))
-                self.read_buf = self.read_buf[match.end():] # Remove up most recent match
+            while True:
+                match = re.search(self.pat, self.read_buf)
+                if match == None:
+                    break
+                else:
+                    asyncio.ensure_future(self.parseMsg(match.group(0)))
+                    self.read_buf = self.read_buf[match.end():]
+                    # print(self.read_buf)
 
     async def power_control(self):
         while True:
@@ -109,6 +111,21 @@ class SerialComm(asyncio.Protocol):
 
 
 #AIOSQLITE
+async def powerQueueHandler(database:str, table:str, powerqueue:asyncio.Queue):
+    db = await aiosqlite.connect(database)
+    await db.execute(f'''
+               CREATE TABLE IF NOT EXISTS {table} (
+               heater_num REAL NOT NULL,
+               mV REAL NOT NULL,
+               mA REAL NOT NULL,
+               duty_cycle REAL NOT NULL,
+               time REAL NOT NULL
+               )
+               ''') #Create power table if it doesn't exist
+    while True:
+        pwr_data = await powerqueue.get()
+        await db.execute(f"INSERT INTO {table} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
+        await db.commit()
 
 
 if __name__ == "__main__":
@@ -116,9 +133,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", default=115200)
+    parser.add_argument("--database", default='your_database.db')
     args = parser.parse_args()
     port = args.port
     baud = args.baud
+    database = args.database
+    TABLE_NAME = "POWER_TABLE"
     #If no port is given, use Serial_Helper to choose one
     if port is None:
         port = Serial_Helper.terminalChooseSerialDevice()
@@ -130,13 +150,15 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
 
     #Create required Queues
-    power_queue = asyncio.Queue() #Power queue items should be a tuple with the following structure: (Heater Number, mV, mA, duty cycle, time)
+    power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
     serial_with_queue = partial(SerialComm, power_queue = power_queue)
     #initalize Serial Asyncio reader and writer
-    serial_coro = serial_asyncio.create_serial_connection(loop, SerialComm, port, baudrate=baud)
+    serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
     asyncio.ensure_future(serial_coro)
     print("SerialComm Scheduled")
-    loop.call_later(10, loop.stop)
+    asyncio.ensure_future(powerQueueHandler(database, TABLE_NAME, power_queue))
+    print("powerQueueHandler Scheduled")
+    loop.call_later(5, loop.stop)
     loop.run_forever()
 
 
