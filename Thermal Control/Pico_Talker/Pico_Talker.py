@@ -111,9 +111,8 @@ class SerialComm(asyncio.Protocol):
 
 
 #AIOSQLITE
-async def powerQueueHandler(database:str, table:str, powerqueue:asyncio.Queue):
-    db = await aiosqlite.connect(database)
-    await db.execute(f'''
+async def powerQueueHandler(database:aiosqlite.Connection, table:str, powerqueue:asyncio.Queue):
+    await database.execute(f'''
                CREATE TABLE IF NOT EXISTS {table} (
                heater_num REAL NOT NULL,
                mV REAL NOT NULL,
@@ -124,8 +123,8 @@ async def powerQueueHandler(database:str, table:str, powerqueue:asyncio.Queue):
                ''') #Create power table if it doesn't exist
     while True:
         pwr_data = await powerqueue.get()
-        await db.execute(f"INSERT INTO {table} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
-        await db.commit()
+        await database.execute(f"INSERT INTO {table} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
+        await database.commit()
 
 
 if __name__ == "__main__":
@@ -152,11 +151,12 @@ if __name__ == "__main__":
     #Create required Queues
     power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
     serial_with_queue = partial(SerialComm, power_queue = power_queue)
+    db = aiosqlite.connect(database)
     #initalize Serial Asyncio reader and writer
     serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
     asyncio.ensure_future(serial_coro)
     print("SerialComm Scheduled")
-    asyncio.ensure_future(powerQueueHandler(database, TABLE_NAME, power_queue))
+    asyncio.ensure_future(powerQueueHandler(db, TABLE_NAME, power_queue))
     print("powerQueueHandler Scheduled")
     loop.call_later(5, loop.stop)
     loop.run_forever()
