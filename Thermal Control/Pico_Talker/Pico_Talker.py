@@ -9,6 +9,28 @@ import time
 import math
 from functools import partial
 
+#Variables for use inititializing databases
+POWER_TABLE_NAME = "power_table"
+TEST_SETTING_TABLE_NAME = "test_settings"
+POWER_INITIALIZATION_QUERY = f'''
+    CREATE TABLE IF NOT EXISTS {POWER_TABLE_NAME} (
+    heater_num REAL NOT NULL,
+    mV REAL NOT NULL,
+    mA REAL NOT NULL,
+    duty_cycle REAL NOT NULL,
+    time REAL NOT NULL
+    )
+    '''
+
+TEST_SETTING_INITIALIZATION_QUERY = f'''
+    CREATE TABLE IF NOT EXISTS {TEST_SETTING_TABLE_NAME} (
+    test_mode REAL NOT NULL,
+    frequency REAL NOT NULL,
+    amplitude REAL NOT NULL,
+    time REAL NOT NULL
+    )
+    '''
+
 #Serial Communication Constants (see Serial Communication Pattern.md)
 MSG_LEN = 8
 HEATER_NOT_FOUND_ERROR = 0x21
@@ -17,13 +39,15 @@ INA260_DATA_HEADER = (0x11, 0x12)
 TERMINATION = 0xff
 DUTY_CYCLE_UPDATE_PERIOD = 0.5 # Seconds
 
-#Data to be collected from SQLite Database
+
+#Data to be collected and updated from SQLite Database
 control_mode = 0 #0: Power Sine, 1: Temperature
 control_freq = 0.1 #Hz, desired frequency of the output curve whether that is power or temperature
 duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
 control_amplitude = 1 #Amplitude, either in Watts or degrees celcius depending on control mode
 
 
+#For regex searching
 ACCEPTABLE_MSG_HEADERS = bytes() #Flatten acceptable headers, for use in parsing serial messages
 for h in [DUTY_CYCLE_CHANGE_HEADER, INA260_DATA_HEADER, HEATER_NOT_FOUND_ERROR]:
     if isinstance(h, Iterable):
@@ -32,7 +56,7 @@ for h in [DUTY_CYCLE_CHANGE_HEADER, INA260_DATA_HEADER, HEATER_NOT_FOUND_ERROR]:
     else:
         ACCEPTABLE_MSG_HEADERS += h.to_bytes()
 
-
+#Heater Constants
 HEATERS = (0, 1) # Mapping for heater numbers
 HEATER_RESISTANCE = (0.05, 0.06) #Ohms, (heater 0, heater 1), measured value, as different heaters are going to have different resistances
 HEATER_SCALAR = (1, 1) #(heater 0, heater 1),heaters are going to have different thermal masses as bottom heater has more to heat up so having a scalar would allow both blocks to heat similarly
@@ -41,11 +65,21 @@ time_start = time.time()
 
 class SerialComm(asyncio.Protocol):
     def __init__(self, power_queue:asyncio.Queue):
+        """Class for managing serial communicaiton with the raspberry pi pico power distribution and control PCB
+        Source for this method of using functools.partial: https://tinkering.xyz/async-serial/#the-rest
+        Args:
+            power_queue (asyncio.Queue): Queue instance that stores the data from the INA260 voltage and current monitoring
+        """
         super().__init__()
         self.transport = None
         self.power_queue = power_queue
 
     def connection_made(self, transport:serial_asyncio.SerialTransport):
+        """Gets called when serial is connected, inherited function
+
+        Args:
+            transport (serial_asyncio.SerialTransport): input gets passed by erial_asyncio.create_serial_connection()
+        """
         self.transport = transport
         self.pat = b'['+ACCEPTABLE_MSG_HEADERS+b'].{'+str(MSG_LEN-2).encode()+b'}'+TERMINATION.to_bytes()
         print(self.pat)
@@ -55,22 +89,37 @@ class SerialComm(asyncio.Protocol):
         print("SerialReader Connection Created")
         asyncio.ensure_future(self.power_control())
 
-    def connection_lost(self, exc):
-        print("SerialReader Closed")
-    
+    def connection_lost(self, exc:Exception):
+        """Gets called when serial is disconnected/lost, inherited function
+
+        Args:
+            exc (Exception): Thrown exception
+        """
+        print(f"SerialReader Closed with exception: {exc}")
     async def parseMsg(self, msg:bytes):
+        """Parse a message sent by the raspberry pi pico and add it the proper queue to get put into the database
+
+        Args:
+            msg (bytes): bytes object of length MSG_LEN that matched the self.pat
+        """
         if msg[0] == INA260_DATA_HEADER[0]: #INA260 Data Heater 0
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 0: {mV} mV | {mA} mA")
-            await self.power_queue.put([0, mV, mA, duty_cycle[0], time.time()]) #This might cause some issues if the queue isn't cleared regularly enoughprint(f"Heater 0: {mV} mV | {mA} mA")
+            await self.power_queue.put([0, mV, mA, duty_cycle[0], time.time()])
+
         elif msg[0] == INA260_DATA_HEADER[1]: #INA260 Data Heater 1
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 1: {mV} mV | {mA} mA")
-            await self.power_queue.put([1, mV, mA, duty_cycle[1], time.time()]) #This might cause some issues if the queue isn't cleared regularly enough
+            await self.power_queue.put([1, mV, mA, duty_cycle[1], time.time()]) 
     
     def data_received(self, data):
+        """add data sent over serial to the serial buffer and check for properly formatted messages using regex, then pass the message to parseMsg
+
+        Args:
+            data (bytes): _description_
+        """
         # print("Reached Data Recieved")
         self.read_buf += data
         # print(self.read_buf)
@@ -85,6 +134,8 @@ class SerialComm(asyncio.Protocol):
                     # print(self.read_buf)
 
     async def power_control(self):
+        """Coroutine to infinitely loop and calculate the duty cycle of the heaters for the raspberry pi pico
+        """
         while True:
             await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
             curr_time = time.time()
@@ -96,6 +147,11 @@ class SerialComm(asyncio.Protocol):
             
 
     def sendDutyCycleMsg(self, heater:int):
+        """format the duty cycle info and send to raspberry pi pico
+
+        Args:
+            heater (int): 0: Heater 0 only, 1: Heater 1 only, 2: both heaters in the same message, 0 or 1 would only really be useful for thermal control
+        """
         self.msg[0] = DUTY_CYCLE_CHANGE_HEADER[heater]
         if heater == 2: #Send duty cycle update to both heaters
             self.msg[1:4] = int(duty_cycle[0]*1000).to_bytes(3)
@@ -106,26 +162,67 @@ class SerialComm(asyncio.Protocol):
         self.sendMsg()
 
     def sendMsg(self):
+        """Add the data into the serial output buffer
+        """
         self.transport.write(self.msg)
         return
 
 
 #AIOSQLITE
-async def powerQueueHandler(database:aiosqlite.Connection, table:str, powerqueue:asyncio.Queue):
-    await database.execute(f'''
-               CREATE TABLE IF NOT EXISTS {table} (
-               heater_num REAL NOT NULL,
-               mV REAL NOT NULL,
-               mA REAL NOT NULL,
-               duty_cycle REAL NOT NULL,
-               time REAL NOT NULL
-               )
-               ''') #Create power table if it doesn't exist
+async def connectDatabase(db:str) -> aiosqlite.Connection:
+    """ Connect to the sqlite database and initialize requires tables
+
+    Args:
+        db (str): database string, example: my_database.db
+
+    Returns:
+        aiosqlite.Connection: databse connection
+    """
+    database = await aiosqlite.connect(db)
+    #Create power table if it doesn't already exist
+    await database.execute(POWER_INITIALIZATION_QUERY)
+    #Create test_settings table if it doesn't already exist
+    await database.execute(TEST_SETTING_INITIALIZATION_QUERY)
+    return database
+
+
+async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str, powerqueue:asyncio.Queue):
+    """Coroutine to infinietly loop and put INA260 data into the proper sqlite database table
+
+    Args:
+        database (aiosqlite.Connection):
+        power_table_name (str): name of the table for power data inside primary sqlite database
+        powerqueue (asyncio.Queue): queue that feeds all the INA260 data between coroutines
+    """
     while True:
         pwr_data = await powerqueue.get()
-        await database.execute(f"INSERT INTO {table} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
+        await database.execute(f"INSERT INTO {power_table_name} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
         await database.commit()
 
+async def testSettingHookHandler(database:aiosqlite.Connection, test_setting_table:str):
+    """handler for webhook pushed by website when user updates the test settings so the script checks the database 
+
+    Args:
+        database (aiosqlite.Connection):
+        test_setting_table (str): name of the table for test setting data inside primary sqlite database
+    """
+    # some code here for connecting to the website and receiving data from the hook, hook sends no data from the python script
+    # only tells it that there is new data to get from the database so that the database serves as the ground truth
+    # because of this, hook should only be trigged after the data gets added to the database
+    # this all through go into a while true that waits for a webhook
+    most_recent = await database.execute_fetchall(f"SELECT * FROM {test_setting_table} ORDER BY time DESC LIMIT 1")
+    most_recent = most_recent[0]
+    control_freq = most_recent[1] #Set new freq
+    control_amplitude = most_recent[2] #Set new amplitude
+    time_start = time.time() #Restart the time used by the sin wave calculator in SerialComm.powerControl
+    if most_recent[0] == "power":
+        control_mode = 0
+    elif most_recent[0] == "temp":
+        print("Temperature based PID control is not currently supported")
+    else:
+        print("Invalid test control mode")
+
+    
 
 if __name__ == "__main__":
     # Argument parsing for serial port
@@ -137,27 +234,32 @@ if __name__ == "__main__":
     port = args.port
     baud = args.baud
     database = args.database
-    TABLE_NAME = "POWER_TABLE"
-    #If no port is given, use Serial_Helper to choose one
+
+    # If no port is given, use Serial_Helper to choose one
     if port is None:
         port = Serial_Helper.terminalChooseSerialDevice()
     #If port given doesn't exist, use Serial_Helper
     elif Serial_Helper.checkValidSerialDevice(port) is False:
         Serial_Helper.terminalChooseSerialDevice()
 
-   
+    # Separate loop required to properly initialize the database before moving on to the rest of the code
     loop = asyncio.get_event_loop()
+    db = asyncio.ensure_future(connectDatabase(database))
+    loop.run_until_complete(db)
+    db = db.result()
 
+    loop = asyncio.get_event_loop()
     #Create required Queues
     power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
     serial_with_queue = partial(SerialComm, power_queue = power_queue)
-    db = aiosqlite.connect(database)
+    
     #initalize Serial Asyncio reader and writer
     serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
     asyncio.ensure_future(serial_coro)
     print("SerialComm Scheduled")
-    asyncio.ensure_future(powerQueueHandler(db, TABLE_NAME, power_queue))
+    asyncio.ensure_future(powerQueueHandler(db, POWER_TABLE_NAME, power_queue))
     print("powerQueueHandler Scheduled")
+    asyncio.ensure_future(testSettingHookHandler(db, "test_settings"))
     loop.call_later(5, loop.stop)
     loop.run_forever()
 
