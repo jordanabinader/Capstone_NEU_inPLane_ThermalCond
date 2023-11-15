@@ -260,7 +260,7 @@ if __name__ == "__main__":
     loop.run_until_complete(db)
     db = db.result()
 
-    # New eventloop that runs forever
+    # New eventloop that runs forever to handle the bulk of this script
     loop = asyncio.get_event_loop()
     #Create required Queues
     power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
@@ -276,3 +276,4 @@ if __name__ == "__main__":
     loop.run_forever()
 
 
+    # The script in its current state needs a way to gracefully exit all of the coroutines to ensure the heaters don't get left on. this has some good demonstrations on how to do it: https://www.roguelynn.com/words/asyncio-graceful-shutdowns/
