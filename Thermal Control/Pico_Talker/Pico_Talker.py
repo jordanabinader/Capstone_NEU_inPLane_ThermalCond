@@ -145,14 +145,22 @@ class SerialComm(asyncio.Protocol):
     async def power_control(self):
         """Coroutine to infinitely loop and calculate the duty cycle of the heaters for the raspberry pi pico
         """
-        while True:
-            await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
-            curr_time = time.time()
-            for heater in HEATERS:
-                duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
-            
+        try:
+            while True:
+                await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
+                curr_time = time.time()
+                for heater in HEATERS:
+                    duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
+                
+                self.sendDutyCycleMsg(2)
+                print(f"Time: {curr_time-time_start} Heater 0: {duty_cycle[0]} Heater 1: {duty_cycle[1]}")
+
+        except asyncio.CancelledError: #when .cancel() is called for this coroutine
+            duty_cycle = [0, 0]
             self.sendDutyCycleMsg(2)
-            print(f"Time: {curr_time-time_start} Heater 0: {duty_cycle[0]} Heater 1: {duty_cycle[1]}")
+            await asyncio.sleep(1) #Wait for a while to ensure that the cancel message was sent before closing the serial port
+            self.transport.close()
+            print("Serial port closed and control task executed")
             
 
     def sendDutyCycleMsg(self, heater:int):
