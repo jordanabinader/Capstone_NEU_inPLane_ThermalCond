@@ -10,6 +10,7 @@ import math
 from functools import partial
 import aiohttp
 import signal
+import os
 
 #Variables for use inititializing databases
 POWER_TABLE_NAME = "power_table"
@@ -99,7 +100,8 @@ class SerialComm(asyncio.Protocol):
         self.bytes_recv = 0
         self.msg = bytearray(MSG_LEN)
         print("SerialReader Connection Created")
-        asyncio.ensure_future(self.power_control())
+        power_control_task = asyncio.ensure_future(self.power_control())
+        power_control_task.set_name("Power-Control-Task")
 
     def connection_lost(self, exc:Exception):
         """Gets called when serial is disconnected/lost, inherited function
@@ -185,7 +187,6 @@ class SerialComm(asyncio.Protocol):
         """Add the data into the serial output buffer
         """
         self.transport.write(self.msg)
-        return
 
 
 #AIOSQLITE
@@ -214,10 +215,13 @@ async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str,
         power_table_name (str): name of the table for power data inside primary sqlite database
         powerqueue (asyncio.Queue): queue that feeds all the INA260 data between coroutines
     """
-    while True:
-        pwr_data = await powerqueue.get()
-        await database.execute(f"INSERT INTO {power_table_name} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
-        await database.commit()
+    try:
+        while True:
+            pwr_data = await powerqueue.get()
+            await database.execute(f"INSERT INTO {power_table_name} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
+            await database.commit()
+    except asyncio.CancelledError:
+        print("Power Queue Shutting Down")
 
 async def testSettingHookHandler(database:aiosqlite.Connection, test_setting_table:str):
     """handler for webhook pushed by website when user updates the test settings so the script checks the database 
@@ -263,24 +267,31 @@ async def webhookGracefulExit(loop:asyncio.AbstractEventLoop):
 
 
 
-async def signalGracefulExit(signal, loop:asyncio.AbstractEventLoop):
+def signalGracefulExit(*args):
     """function for signal handling, calls graceful exit when triggered.
 
     Args:
-        signal (signal.SIGUP, SIGTERM, SIGINT): user inturrupts
+        stack_frame (frame object or none): see https://docs.python.org/3/library/signal.html#signal.signal 
         loop (asyncio.AbstractEventLoop): primary event loop
     """
-    await gracefulExit(loop)
+    gracefulExit(loop)
 
 
-async def gracefulExit(loop:asyncio.AbstractEventLoop):
+def gracefulExit(loop:asyncio.AbstractEventLoop):
     """Gracefully exit whatevent loops can be gracefully exited, some, like the serial coroutine might not be so pleasant, based on https://www.roguelynn.com/words/asyncio-graceful-shutdowns/
 
     Args:
         loop (asyncio.AbstractEventLoop): primary event loop
     """
+    graceful_exit_req_tasks = ["Power-Control-Task"] #Tasks that require a graceful exit, should be in order of exit priority
+    print(asyncio.current_task())
+    # tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    # print("Tasks at the beginning: ")
+    # for t in tasks:
+    #     print(t)
+
     #Ensure that task writing duty cycle data gets canceled first because otherwise the heaters could be left on
-    serial_out_tasks = [t for t in asyncio.all_tasks() if t._coro.__name__ == "power_control"]
+    serial_out_tasks = [t for t in asyncio.all_tasks() if t._coro.__name__ in graceful_exit_req_tasks]
     for t in serial_out_tasks:
         t.cancel()
 
@@ -288,11 +299,43 @@ async def gracefulExit(loop:asyncio.AbstractEventLoop):
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
+
     
-    await asyncio.gather(*tasks, return_exceptions=True)
-    loop.stop()
 
+async def createMainCoroutines(loop:asyncio.AbstractEventLoop, serial_port:str, baud_rate:int, db:aiosqlite.Connection):
+    """This function creates all the required coroutines to enable to use of run_until_complete to clean up exiting of the program
 
+    Args:
+        loop (asyncio.AbstractEventLoop): main event loop
+        serial_port (str): serial port string
+        baud_rate (int): boud rate of the serial port
+        db (aiosqlite.Connection): primary data base for power and test setting data
+    """
+    power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
+
+    #initalize Serial Asyncio reader and writer
+    serial_with_queue = partial(SerialComm, power_queue = power_queue)
+    serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
+    serial_task = asyncio.ensure_future(serial_coro)
+    serial_task.set_name("Serial-Comm-Task")
+    print("SerialComm Scheduled")
+
+    #Initialize powerQueueHandler coroutines
+    power_queue_task = asyncio.ensure_future(powerQueueHandler(db, POWER_TABLE_NAME, power_queue))
+    power_queue_task.set_name("Power-Queue-Task")
+    print("powerQueueHandler Scheduled")
+
+    #Initialize Webhook Coroutines
+    webhook_exit_task = asyncio.ensure_future(webhookGracefulExit(loop)) #Monitor END_TEST_WEBHOOK_ENDPOINT to get shutdown signal from webserver
+    webhook_exit_task.set_name("Webhook-Exit-Task")
+    test_setting_task = asyncio.ensure_future(testSettingHookHandler(db, TEST_SETTING_TABLE_NAME))
+    test_setting_task.set_name("Test-Settting-Handler-Task")
+    
+    try:
+        # await asyncio.gather(serial_task, power_queue_task)
+        await asyncio.gather(serial_task, power_queue_task, webhook_exit_task, test_setting_task)
+    except asyncio.CancelledError:
+        print("createMainCoroutines Cancelled")        
 
 
 if __name__ == "__main__":
@@ -321,27 +364,15 @@ if __name__ == "__main__":
 
     # New eventloop that runs forever to handle the bulk of this script
     loop = asyncio.get_event_loop()
-    #Create required Queues
-    power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
-    serial_with_queue = partial(SerialComm, power_queue = power_queue)
 
     #Add signal handler tasks
     signals = (signal.SIGTERM, signal.SIGINT)
     for s in signals:
-        loop.add_signal_handler(
-        s, lambda s=s: asyncio.create_task(signalGracefulExit(s, loop)))
-
-
-    asyncio.ensure_future(webhookGracefulExit(loop)) #Monitor END_TEST_WEBHOOK_ENDPOINT to get shutdown signal from webserver
+        signal.signal(s, signalGracefulExit)
     
-    #initalize Serial Asyncio reader and writer
-    serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
-    asyncio.ensure_future(serial_coro)
-    print("SerialComm Scheduled")
-    asyncio.ensure_future(powerQueueHandler(db, POWER_TABLE_NAME, power_queue))
-    print("powerQueueHandler Scheduled")
-    asyncio.ensure_future(testSettingHookHandler(db, "test_settings"))
-    loop.run_forever()
-
-
-    # The script in its current state needs a way to gracefully exit all of the coroutines to ensure the heaters don't get left on. this has some good demonstrations on how to do it: https://www.roguelynn.com/words/asyncio-graceful-shutdowns/
+    create_main_task = asyncio.ensure_future(createMainCoroutines(loop, port, baud, db))
+    
+    loop.run_until_complete(create_main_task)
+    print("Exited Loop")
+    loop.close()
+    os._exit(1)
