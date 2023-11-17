@@ -49,7 +49,7 @@ control_modes_map = {
 }
 control_mode = 0 #see control_modes_map
 control_freq = 0.1 #Hz, desired frequency of the output curve whether that is power or temperature
-duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
+# duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
 control_amplitude = 1 #Amplitude, either in Watts or degrees celcius depending on control mode
 
 
@@ -84,6 +84,7 @@ class SerialComm(asyncio.Protocol):
         super().__init__()
         self.transport = None
         self.power_queue = power_queue
+        self.duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
 
     def connection_made(self, transport:serial_asyncio.SerialTransport):
         """Gets called when serial is connected, inherited function
@@ -117,13 +118,13 @@ class SerialComm(asyncio.Protocol):
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 0: {mV} mV | {mA} mA")
-            await self.power_queue.put([0, mV, mA, duty_cycle[0], time.time()])
+            await self.power_queue.put([0, mV, mA, self.duty_cycle[0], time.time()])
 
         elif msg[0] == INA260_DATA_HEADER[1]: #INA260 Data Heater 1
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 1: {mV} mV | {mA} mA")
-            await self.power_queue.put([1, mV, mA, duty_cycle[1], time.time()]) 
+            await self.power_queue.put([1, mV, mA, self.duty_cycle[1], time.time()]) 
     
     def data_received(self, data):
         """add data sent over serial to the serial buffer and check for properly formatted messages using regex, then pass the message to parseMsg
@@ -152,13 +153,13 @@ class SerialComm(asyncio.Protocol):
                 await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
                 curr_time = time.time()
                 for heater in HEATERS:
-                    duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
+                    self.duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
                 
                 self.sendDutyCycleMsg(2)
-                print(f"Time: {curr_time-time_start} Heater 0: {duty_cycle[0]} Heater 1: {duty_cycle[1]}")
+                print(f"Time: {curr_time-time_start} Heater 0: {self.duty_cycle[0]} Heater 1: {self.duty_cycle[1]}")
 
         except asyncio.CancelledError: #when .cancel() is called for this coroutine
-            duty_cycle = [0, 0]
+            self.duty_cycle = [0, 0]
             self.sendDutyCycleMsg(2)
             await asyncio.sleep(1) #Wait for a while to ensure that the cancel message was sent before closing the serial port
             self.transport.close()
@@ -173,10 +174,10 @@ class SerialComm(asyncio.Protocol):
         """
         self.msg[0] = DUTY_CYCLE_CHANGE_HEADER[heater]
         if heater == 2: #Send duty cycle update to both heaters
-            self.msg[1:4] = int(duty_cycle[0]*1000).to_bytes(3)
-            self.msg[4:7] = int(duty_cycle[1]*1000).to_bytes(3)
+            self.msg[1:4] = int(self.duty_cycle[0]*1000).to_bytes(3)
+            self.msg[4:7] = int(self.duty_cycle[1]*1000).to_bytes(3)
         else:
-            self.msg[1:4] = int(duty_cycle[heater]*1000).to_bytes(3)
+            self.msg[1:4] = int(self.duty_cycle[heater]*1000).to_bytes(3)
 
         self.sendMsg()
 
