@@ -6,6 +6,7 @@ import serial_asyncio #Tutorial used: https://tinkering.xyz/async-serial/
 import aiosqlite
 from collections.abc import Iterable
 import time
+import datetime
 import math
 from functools import partial
 import aiohttp
@@ -108,13 +109,13 @@ class SerialComm(asyncio.Protocol):
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 0: {mV} mV | {mA} mA")
-            await self.power_queue.put([0, mV, mA, self.duty_cycle[0], time.time()])
+            await self.power_queue.put([0, mV, mA, self.duty_cycle[0], datetime.now().__str__()])
 
         elif msg[0] == INA260_DATA_HEADER[1]: #INA260 Data Heater 1
             mV = ((((msg[1]<<8)+msg[2])<<8)+msg[3])/100
             mA = ((((msg[4]<<8)+msg[5])<<8)+msg[6])/100
             print(f"Heater 1: {mV} mV | {mA} mA")
-            await self.power_queue.put([1, mV, mA, self.duty_cycle[1], time.time()]) 
+            await self.power_queue.put([1, mV, mA, self.duty_cycle[1], datetime.now().__str__()]) 
     
     def data_received(self, data):
         """add data sent over serial to the serial buffer and check for properly formatted messages using regex, then pass the message to parseMsg
@@ -188,7 +189,7 @@ async def connectDatabase(db:str) -> aiosqlite.Connection:
         aiosqlite.Connection: databse connection
     """
     database = await aiosqlite.connect(db)
-    test_name = await database.execute_fetchone(f"SELECT id FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY time DESC LIMIT 1")
+    test_name = await database.execute_fetchone(f"SELECT testId FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY datetime DESC LIMIT 1")
     test_name = test_name[0]
 
     #Set proper table names for this test
@@ -228,11 +229,11 @@ def createPowerInitQuery(test_name:str)->str:
     """
     ret = f'''
     CREATE TABLE IF NOT EXISTS {testNameTableFormatter(POWER_TABLE_NAME_BASE, test_name)} (
-    heater_num REAL NOT NULL,
+    heaterNum REAL NOT NULL,
     mV REAL NOT NULL,
     mA REAL NOT NULL,
-    duty_cycle REAL NOT NULL,
-    time REAL NOT NULL
+    dutyCycle REAL NOT NULL,
+    datetime REAL NOT NULL
     )
     '''
     return ret
@@ -248,10 +249,10 @@ def createTestSettingInitQuery(test_name:str)->str:
     """
     ret = f'''
     CREATE TABLE IF NOT EXISTS {testNameTableFormatter(TEST_SETTING_TABLE_NAME_BASE, test_name)} (
-    test_mode REAL NOT NULL,
+    controlMode REAL NOT NULL,
     frequency REAL NOT NULL,
     amplitude REAL NOT NULL,
-    time REAL NOT NULL
+    datetime REAL NOT NULL
     )
     '''
 
@@ -266,7 +267,7 @@ async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str,
     try:
         while True:
             pwr_data = await powerqueue.get()
-            await database.execute(f"INSERT INTO {power_table_name} (heater_num, mV, mA, duty_cycle, time) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
+            await database.execute(f"INSERT INTO {power_table_name} (heaterNum, mV, mA, dutyCycle, datetime) VALUES ({pwr_data[0]}, {pwr_data[1]}, {pwr_data[2]}, {pwr_data[3]}, {pwr_data[4]})")
             await database.commit()
     except asyncio.CancelledError:
         print("Power Queue Shutting Down")
@@ -287,7 +288,7 @@ async def testSettingHookHandler(database:aiosqlite.Connection, test_setting_tab
                 # headers: { "content-type": "text/plain" },
                 # body: "New Test Setting"
                 if response.body == "New Test Setting": #If the response has the proper content
-                    most_recent = await database.execute_fetchall(f"SELECT * FROM {test_setting_table} ORDER BY time DESC LIMIT 1") #Instead of using the webhook to transfer data about the new test settings, the database is used as the only groundtruth of information
+                    most_recent = await database.execute_fetchall(f"SELECT * FROM {test_setting_table} ORDER BY datetime DESC LIMIT 1") #Instead of using the webhook to transfer data about the new test settings, the database is used as the only groundtruth of information
                     most_recent = most_recent[0]
                     if most_recent != most_recent[0] or control_amplitude != most_recent[2] or control_modes_map[most_recent[0]] != control_mode: # check to see if there are any new values from the database so bad webhook messages are caught and the time isn't reset arbitrarily
                         most_recent = most_recent[0]
