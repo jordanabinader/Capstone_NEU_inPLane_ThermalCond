@@ -13,26 +13,14 @@ import signal
 import os
 
 #Variables for use inititializing databases
-POWER_TABLE_NAME = "power_table"
-TEST_SETTING_TABLE_NAME = "test_settings"
-POWER_INITIALIZATION_QUERY = f'''
-    CREATE TABLE IF NOT EXISTS {POWER_TABLE_NAME} (
-    heater_num REAL NOT NULL,
-    mV REAL NOT NULL,
-    mA REAL NOT NULL,
-    duty_cycle REAL NOT NULL,
-    time REAL NOT NULL
-    )
-    '''
+TEST_DIRECTORY_TABLE_NAME = "test_directory"
+POWER_TABLE_NAME_BASE = "power_table" #Base strings for the test specific tables that the test name gets appended to with testNameTableFormatter
+TEST_SETTING_TABLE_NAME_BASE = "test_settings" #Base strings for the test specific tables that the test name gets appended to with testNameTableFormatter
 
-TEST_SETTING_INITIALIZATION_QUERY = f'''
-    CREATE TABLE IF NOT EXISTS {TEST_SETTING_TABLE_NAME} (
-    test_mode REAL NOT NULL,
-    frequency REAL NOT NULL,
-    amplitude REAL NOT NULL,
-    time REAL NOT NULL
-    )
-    '''
+TEST_SETTING_TABLE_NAME = "" #Filled in by connectDatabase
+POWER_TABLE_NAME = "" #Filled in by connectDatabase
+POWER_INITIALIZATION_QUERY = "" #Filled in by connectDatabase
+TEST_SETTING_INITIALIZATION_QUERY = "" #Filled in by connectDatabase
 
 #Serial Communication Constants (see Serial Communication Pattern.md)
 MSG_LEN = 8
@@ -200,12 +188,72 @@ async def connectDatabase(db:str) -> aiosqlite.Connection:
         aiosqlite.Connection: databse connection
     """
     database = await aiosqlite.connect(db)
+    test_name = await database.execute_fetchone(f"SELECT testName FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY time DESC LIMIT 1")
+    test_name = test_name[0]
+
+    #Set proper table names for this test
+    global POWER_INITIALIZATION_QUERY, TEST_SETTING_INITIALIZATION_QUERY, TEST_SETTING_TABLE_NAME, TEST_SETTING_TABLE_NAME_BASE, POWER_TABLE_NAME, POWER_TABLE_NAME_BASE
+    POWER_INITIALIZATION_QUERY = createPowerInitQuery(test_name)
+    TEST_SETTING_INITIALIZATION_QUERY = createTestSettingInitQuery(test_name)
+    TEST_SETTING_TABLE_NAME = testNameTableFormatter(TEST_SETTING_TABLE_NAME_BASE, test_name)
+    POWER_TABLE_NAME = testNameTableFormatter(POWER_TABLE_NAME_BASE, test_name)
+
     #Create power table if it doesn't already exist
     await database.execute(POWER_INITIALIZATION_QUERY)
     #Create test_settings table if it doesn't already exist
     await database.execute(TEST_SETTING_INITIALIZATION_QUERY)
+
     return database
 
+def testNameTableFormatter(table_name:str, test_name:str)-> str:
+    """Returns the properly formatted table name string for all tables
+
+    Args:
+        table_name (str): Base name of the table, like test_settings
+        test_name (str): name of the test
+
+    Returns:
+        str: table name for this specific test
+    """
+    return f"{table_name}_{test_name}"
+
+def createPowerInitQuery(test_name:str)->str:
+    """create the proper table creation query for the power data
+
+    Args:
+        test_name (str): name of the test
+
+    Returns:
+        str: proper query
+    """
+    ret = f'''
+    CREATE TABLE IF NOT EXISTS {testNameTableFormatter(POWER_TABLE_NAME_BASE, test_name)} (
+    heater_num REAL NOT NULL,
+    mV REAL NOT NULL,
+    mA REAL NOT NULL,
+    duty_cycle REAL NOT NULL,
+    time REAL NOT NULL
+    )
+    '''
+    return ret
+
+def createTestSettingInitQuery(test_name:str)->str:
+    """create the proper table creation query for the test settings
+
+    Args:
+        test_name (str): name of the test
+
+    Returns:
+        str: proper query
+    """
+    ret = f'''
+    CREATE TABLE IF NOT EXISTS {testNameTableFormatter(TEST_SETTING_TABLE_NAME_BASE, test_name)} (
+    test_mode REAL NOT NULL,
+    frequency REAL NOT NULL,
+    amplitude REAL NOT NULL,
+    time REAL NOT NULL
+    )
+    '''
 
 async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str, powerqueue:asyncio.Queue):
     """Coroutine to infinietly loop and put INA260 data into the proper sqlite database table
