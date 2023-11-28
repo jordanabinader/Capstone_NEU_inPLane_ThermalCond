@@ -188,7 +188,7 @@ async def connectDatabase(db:str) -> aiosqlite.Connection:
         aiosqlite.Connection: databse connection
     """
     database = await aiosqlite.connect(db)
-    test_name = await database.execute_fetchone(f"SELECT testName FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY time DESC LIMIT 1")
+    test_name = await database.execute_fetchone(f"SELECT id FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY time DESC LIMIT 1")
     test_name = test_name[0]
 
     #Set proper table names for this test
