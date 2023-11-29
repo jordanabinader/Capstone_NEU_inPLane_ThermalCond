@@ -385,6 +385,7 @@ def createTestSettingInitQuery(test_name:str)->str:
     datetime REAL NOT NULL
     )
     '''
+    return ret
 
 async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str, powerqueue:asyncio.Queue):
     """Coroutine to infinietly loop and put INA260 data into the proper sqlite database table
