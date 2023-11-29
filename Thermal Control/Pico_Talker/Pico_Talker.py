@@ -10,8 +10,10 @@ import datetime
 import math
 from functools import partial
 import aiohttp
+from aiohttp import web
 import signal
 import os
+from typing import Tuple, List
 
 #Variables for use inititializing databases
 TEST_DIRECTORY_TABLE_NAME = "test_directory"
@@ -60,21 +62,80 @@ SUPPLY_VOLTAGE = 12 #Volts
 time_start = time.time()
 
 #Webhook Endpoints
-TEST_SETTING_WEBHOOK_ENDPOINT = "http://localhost:3000/test-setting-update"
-END_TEST_WEBHOOK_ENDPOINT = "http://localhost:3000/test-end"
+TEST_SETTING_ENDPOINT = "/test-setting-update"
+END_TEST_ENDPOINT = "/test-end"
 
 
 class SerialComm(asyncio.Protocol):
-    def __init__(self, power_queue:asyncio.Queue):
+    def __init__(self, power_queue:asyncio.Queue, test_setting_queue:asyncio.Queue, db:aiosqlite.Connection, network_port:int = 3001, heater_scalar:Tuple[float, float] = (0,0), heater_resitance: Tuple[float, float] = (0.05, 0.05), supply_voltage:float = 12):
         """Class for managing serial communicaiton with the raspberry pi pico power distribution and control PCB
         Source for this method of using functools.partial: https://tinkering.xyz/async-serial/#the-rest
         Args:
             power_queue (asyncio.Queue): Queue instance that stores the data from the INA260 voltage and current monitoring
+            test_setting_queue (asyncio.Queue): Queue instance for updating test settings
+            db (aiosqlite.Connection): The database storing all the info for the test setup
+            network_port (int, optional): Network port for the webserver to listen to for test setting and test end requests. Defaults to 3001.
+            heater_scalar (Tuple[float, float], optional): (heater 0, heater 1),heaters are going to have different thermal masses as bottom heater has more to heat up so having a scalar would allow both blocks to heat similarly. Defaults to (0,0).
+            heater_resitance (Tuple[float, float], optional): Ohms, (heater 0, heater 1), measured value, as different heaters are going to have different resistances. Defaults to (0.05, 0.05).
+            supply_voltage (float, optional): Volts, The supply voltage that drives the heaters. Defaults to 12.
         """
+
         super().__init__()
         self.transport = None
+        self.db = db
+        self.test_setting_queue = test_setting_queue
         self.power_queue = power_queue
         self.duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
+        self.HEATER_RESISTANCE = heater_resitance
+        self.HEATER_SCALAR = heater_scalar
+        self.SUPPLY_VOLTAGE = supply_voltage
+        self.port = network_port
+
+    async def initWebserver(self):
+        # Webserver
+        app = web.Application()
+        app.add_routes([
+            web.put(TEST_SETTING_ENDPOINT, self.testSettingUpdateHook),
+            web.put(END_TEST_ENDPOINT, self.endTestHook)
+        ])
+        runner = web.AppRunner(app)
+        site = web.TCPSite(runner, 'localhost', port=self.port)
+        try:
+            await site.start()
+        except asyncio.CancelledError:
+            runner.shutdown()
+            app.cleanup()
+
+    async def testSettingUpdateHook(self, request:web.Request)-> web.StreamResponse:
+        """handler for PUT requests at TEST_SETTING_ENDPOINT endpoint
+
+        Args:
+            request (web.Request): content of the put request, doesn't really matter for this
+
+        Returns:
+            web.StreamResponse: responds with 200 status
+        """
+        curr_setting = await self.getLatestTestSetting()
+        self.test_setting_queue.put(curr_setting)
+        return web.Response(status=200)
+    
+    async def getLatestTestSetting(self)->Tuple:
+        curr_setting = self.db.execute_fetchall(f"SELECT * FROM {TEST_SETTING_TABLE_NAME} ORDER BY datetime DESC LIMIT 1 ")[0]
+        return curr_setting
+
+    async def endTestHook(self, request:web.Request)-> web.StreamResponse:
+        """_summary_
+
+        Args:
+            request (web.Request): content of the put request, doesn't really matter for this
+
+        Returns:
+            web.StreamResponse: responds with 200 status
+        """
+        signal.raise_signal(signal.SIGINT) #Raise signal.SIGINT to get caught by signalGracefulExit
+        return web.Response(status=200)
+
+
 
     def connection_made(self, transport:serial_asyncio.SerialTransport):
         """Gets called when serial is connected, inherited function
@@ -144,7 +205,7 @@ class SerialComm(asyncio.Protocol):
                 await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
                 curr_time = time.time()
                 for heater in HEATERS:
-                    self.duty_cycle[heater] = math.sqrt(HEATER_SCALAR[heater]*HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/SUPPLY_VOLTAGE
+                    self.duty_cycle[heater] = math.sqrt(self.HEATER_SCALAR[heater]*self.HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/self.SUPPLY_VOLTAGE
                 
                 self.sendDutyCycleMsg(2)
                 print(f"Time: {curr_time-time_start} Heater 0: {self.duty_cycle[0]} Heater 1: {self.duty_cycle[1]}")
@@ -189,8 +250,8 @@ async def connectDatabase(db:str) -> aiosqlite.Connection:
         aiosqlite.Connection: databse connection
     """
     database = await aiosqlite.connect(db)
-    test_name = await database.execute_fetchone(f"SELECT testId FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY datetime DESC LIMIT 1")
-    test_name = test_name[0]
+    test_name = await database.execute_fetchall(f"SELECT testId FROM {TEST_DIRECTORY_TABLE_NAME} ORDER BY datetime DESC LIMIT 1")
+    test_name = test_name[0][0]
 
     #Set proper table names for this test
     global POWER_INITIALIZATION_QUERY, TEST_SETTING_INITIALIZATION_QUERY, TEST_SETTING_TABLE_NAME, TEST_SETTING_TABLE_NAME_BASE, POWER_TABLE_NAME, POWER_TABLE_NAME_BASE
@@ -361,9 +422,10 @@ async def createMainCoroutines(loop:asyncio.AbstractEventLoop, serial_port:str, 
         db (aiosqlite.Connection): primary data base for power and test setting data
     """
     power_queue = asyncio.Queue() #Power queue items should be a list with the following structure: (Heater Number, mV, mA, duty cycle, time)
+    test_setting_queue = asyncio.Queue() #Test setting queue to pass updated test settings through
 
     #initalize Serial Asyncio reader and writer
-    serial_with_queue = partial(SerialComm, power_queue = power_queue)
+    serial_with_queue = partial(SerialComm, power_queue = power_queue, test_setting_queue = test_setting_queue, db =  db)
     serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
     serial_task = asyncio.ensure_future(serial_coro)
     serial_task.set_name("Serial-Comm-Task")
