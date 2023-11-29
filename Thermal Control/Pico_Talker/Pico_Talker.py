@@ -31,7 +31,6 @@ HEATER_NOT_FOUND_ERROR = 0x21
 DUTY_CYCLE_CHANGE_HEADER = (0x01, 0x02, 0x03) # Heater 1, Heater 2, Both Heaters
 INA260_DATA_HEADER = (0x11, 0x12)
 TERMINATION = 0xff
-DUTY_CYCLE_UPDATE_PERIOD = 0.5 # Seconds
 
 
 #Data to be collected and updated from SQLite Database
@@ -53,13 +52,6 @@ for h in [DUTY_CYCLE_CHANGE_HEADER, INA260_DATA_HEADER, HEATER_NOT_FOUND_ERROR]:
             ACCEPTABLE_MSG_HEADERS += i.to_bytes()
     else:
         ACCEPTABLE_MSG_HEADERS += h.to_bytes()
-
-#Heater Constants
-HEATERS = (0, 1) # Mapping for heater numbers
-HEATER_RESISTANCE = (0.05, 0.06) #Ohms, (heater 0, heater 1), measured value, as different heaters are going to have different resistances
-HEATER_SCALAR = (1, 1) #(heater 0, heater 1),heaters are going to have different thermal masses as bottom heater has more to heat up so having a scalar would allow both blocks to heat similarly
-SUPPLY_VOLTAGE = 12 #Volts
-time_start = time.time()
 
 #Webhook Endpoints
 TEST_SETTING_ENDPOINT = "/test-setting-update"
@@ -92,6 +84,8 @@ class SerialComm(asyncio.Protocol):
         self.HEATER_RESISTANCE = heater_resitance
         self.HEATER_SCALAR = heater_scalar
         self.SUPPLY_VOLTAGE = supply_voltage
+        self.HEATERS = (0, 1) # Mapping for heater numbers
+        self.DUTY_CYCLE_UPDATE_PERIOD = 0.5 # Seconds
 
         #Webpage network info
         self.port = network_port
@@ -262,10 +256,10 @@ class SerialComm(asyncio.Protocol):
         """
         try:
             while True:
-                await asyncio.sleep(DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
+                await asyncio.sleep(self.DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
                 curr_time = time.time()
-                for heater in HEATERS:
-                    self.duty_cycle[heater] = math.sqrt(self.HEATER_SCALAR[heater]*self.HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-time_start)/(2*math.pi))+control_amplitude))*100/self.SUPPLY_VOLTAGE
+                for heater in self.HEATERS:
+                    self.duty_cycle[heater] = math.sqrt(self.HEATER_SCALAR[heater]*self.HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-self.start_time)/(2*math.pi))+control_amplitude))*100/self.SUPPLY_VOLTAGE
                 
                 self.sendDutyCycleMsg(2)
                 print(f"Time: {curr_time-time_start} Heater 0: {self.duty_cycle[0]} Heater 1: {self.duty_cycle[1]}")
@@ -279,7 +273,7 @@ class SerialComm(asyncio.Protocol):
         """Coroutine to set the duty cycle of both heaters to the value stored in self.amplitude. Example: self.amplitude = 3.55, duty cycle set to 3.55*
         """
         try:
-            for heater in HEATERS:
+            for heater in self.HEATERS:
                 self.duty_cycle[heater] = self.amplitude
             self.sendDutyCycleMsg(2)
 
@@ -313,6 +307,7 @@ class SerialComm(asyncio.Protocol):
         self.transport.write(self.msg)
 
 
+#########################################################################
 #AIOSQLITE
 async def connectDatabase(db:str) -> aiosqlite.Connection:
     """ Connect to the sqlite database and initialize requires tables
@@ -408,6 +403,8 @@ async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str,
         print("Power Queue Shutting Down")
 
 
+#########################################################################
+#Signal Handling and Graceful Exit
 def signalGracefulExit(*args):
     """function for signal handling, calls graceful exit when triggered.
 
@@ -424,7 +421,7 @@ def gracefulExit(loop:asyncio.AbstractEventLoop):
     Args:
         loop (asyncio.AbstractEventLoop): primary event loop
     """
-    graceful_exit_req_tasks = ["Power-Control-Task"] #Tasks that require a graceful exit, should be in order of exit priority
+    graceful_exit_req_tasks = ["Control-Loop-Task"] #Tasks that require a graceful exit, should be in order of exit priority, Control-Loop-Task ensures that the serial port gets closed out correctly
     print(asyncio.current_task())
     # tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     # print("Tasks at the beginning: ")
@@ -440,9 +437,10 @@ def gracefulExit(loop:asyncio.AbstractEventLoop):
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     for task in tasks:
         task.cancel()
+   
 
-    
-
+#########################################################################
+#Main
 async def createMainCoroutines(loop:asyncio.AbstractEventLoop, serial_port:str, baud_rate:int, db:aiosqlite.Connection):
     """This function creates all the required coroutines to enable to use of run_until_complete to clean up exiting of the program
 
@@ -457,7 +455,7 @@ async def createMainCoroutines(loop:asyncio.AbstractEventLoop, serial_port:str, 
 
     #initalize Serial Asyncio reader and writer
     serial_with_queue = partial(SerialComm, power_queue = power_queue, test_setting_queue = test_setting_queue, db =  db)
-    serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, port, baudrate=baud)
+    serial_coro = serial_asyncio.create_serial_connection(loop, serial_with_queue, serial_port, baudrate=baud_rate)
     serial_task = asyncio.ensure_future(serial_coro)
     serial_task.set_name("Serial-Comm-Task")
     print("SerialComm Scheduled")
@@ -467,15 +465,10 @@ async def createMainCoroutines(loop:asyncio.AbstractEventLoop, serial_port:str, 
     power_queue_task.set_name("Power-Queue-Task")
     print("powerQueueHandler Scheduled")
 
-    #Initialize Webhook Coroutines
-    webhook_exit_task = asyncio.ensure_future(webhookGracefulExit(loop)) #Monitor END_TEST_WEBHOOK_ENDPOINT to get shutdown signal from webserver
-    webhook_exit_task.set_name("Webhook-Exit-Task")
-    test_setting_task = asyncio.ensure_future(testSettingHookHandler(db, TEST_SETTING_TABLE_NAME))
-    test_setting_task.set_name("Test-Settting-Handler-Task")
     
     try:
         # await asyncio.gather(serial_task, power_queue_task)
-        await asyncio.gather(serial_task, power_queue_task, webhook_exit_task, test_setting_task)
+        await asyncio.gather(serial_task, power_queue_task)
     except asyncio.CancelledError:
         print("createMainCoroutines Cancelled")        
 
