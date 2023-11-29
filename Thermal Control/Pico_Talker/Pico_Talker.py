@@ -83,13 +83,30 @@ class SerialComm(asyncio.Protocol):
         super().__init__()
         self.transport = None
         self.db = db
+        #Queues
         self.test_setting_queue = test_setting_queue
         self.power_queue = power_queue
+
+        #Test Setup info
         self.duty_cycle = [0, 0] #% duty cycle of each heater, useful for ensuring that the power output lines up properly
         self.HEATER_RESISTANCE = heater_resitance
         self.HEATER_SCALAR = heater_scalar
         self.SUPPLY_VOLTAGE = supply_voltage
+
+        #Webpage network info
         self.port = network_port
+
+        #Test Setting Information
+        self.CONTROL_OPTIONS = {
+            "Manual": self.heaterManual,  # Parse db table amplitude column as duty cycle in percent to send to serial device
+            "Power": self.heaterPower     # Sine wave of power, Amplitude column in watts, frequency column in rad/s
+            #, "Temperature": self.heaterTemp # Possible addtion of temperature control in the future, needs a PID loop to ensure temperatures are accurate. Amplitude is amplitude of temp sine, frequency in rad/s, would need to add a new column for the vertical offset.
+        }
+        self.control_mode = "Manual" # Default Setting so that the test starts off with all the heaters off
+        self.frequency = 0 #Rad/s
+        self.amplitude = 0 # units depend on control mode, see self.CONTROL_OPTIONS
+        self.start_time = time.time()
+        self.test_setting_queue.put(self.getLatestTestSetting()) #Put the desired initial settings into the test setting queue to get applied at the beginning of the test
 
     async def initWebserver(self):
         # Webserver
@@ -135,8 +152,6 @@ class SerialComm(asyncio.Protocol):
         signal.raise_signal(signal.SIGINT) #Raise signal.SIGINT to get caught by signalGracefulExit
         return web.Response(status=200)
 
-
-
     def connection_made(self, transport:serial_asyncio.SerialTransport):
         """Gets called when serial is connected, inherited function
 
@@ -150,8 +165,13 @@ class SerialComm(asyncio.Protocol):
         self.bytes_recv = 0
         self.msg = bytearray(MSG_LEN)
         print("SerialReader Connection Created")
-        power_control_task = asyncio.ensure_future(self.power_control())
-        power_control_task.set_name("Power-Control-Task")
+        webserver_task = asyncio.ensure_future(self.initWebserver())
+        webserver_task.set_name("Webserver-Task")
+        control_loop_task = asyncio.ensure_future(self.controlLoop())
+        control_loop_task.set_name("Control-Loop-Task")
+
+        self.heater_control_task = asyncio.ensure_future(self.stall()) #The Function that is inside this task gets controlled by self.controlLoop
+        self.heater_control_task.set_name("Heater-Control-Task")
 
     def connection_lost(self, exc:Exception):
         """Gets called when serial is disconnected/lost, inherited function
@@ -160,6 +180,46 @@ class SerialComm(asyncio.Protocol):
             exc (Exception): Thrown exception
         """
         print(f"SerialReader Closed with exception: {exc}")
+    
+    async def stall(self):
+        try: 
+            while True:
+                await asyncio.sleep(0.5) #This should stay relatively short to ensure that when it gets cancelled it can cancel quickly
+        except asyncio.CancelledError:
+            return
+
+    async def controlLoop(self):
+        """Infinite loop to change the test settings based on items getting added to the test setting queue
+        """
+        try:
+            while True:
+                new_test_setting = await self.test_setting_queue.get()
+                control_mode = new_test_setting[0]
+                frequency = new_test_setting[1]
+                amplitude = new_test_setting[2]
+
+                if control_mode in self.CONTROL_OPTIONS.keys(): #Make sure the control mode is valid
+                    if control_mode == self.control_mode and frequency == self.frequency and amplitude == self.amplitude: #If all the settings are the same do nothing
+                        continue
+                    else: #If something has changed
+                        #Cancel the currently running task
+                        self.heater_control_task.cancel()
+                        await self.heater_control_task
+
+                        #Start the new task
+                        self.control_mode = control_mode
+                        self.frequency = frequency
+                        self.amplitude = amplitude
+                        self.start_time = time.time() #Reset the clock for start time, useful for sine wave
+                        self.heater_control_task = asyncio.ensure_future(self.CONTROL_OPTIONS[control_mode])
+
+        except asyncio.CancelledError:
+            self.heater_control_task.cancel() #Cancel the current heater control task first to ensure that the heaters are all turned off
+            await self.heater_control_task #Wait for that task to finish before closing the serial port
+            self.transport.close() # self.controlLoop should only get exited when 
+            print("Control Loop Exited")
+            return
+        
     async def parseMsg(self, msg:bytes):
         """Parse a message sent by the raspberry pi pico and add it the proper queue to get put into the database
 
@@ -197,8 +257,8 @@ class SerialComm(asyncio.Protocol):
                     self.read_buf = self.read_buf[match.end():]
                     # print(self.read_buf)
 
-    async def power_control(self):
-        """Coroutine to infinitely loop and calculate the duty cycle of the heaters for the raspberry pi pico
+    async def heaterPower(self):
+        """Coroutine to infinitely loop and calculate the duty cycle of the heaters for the raspberry pi pico using a power sin wave
         """
         try:
             while True:
@@ -213,9 +273,23 @@ class SerialComm(asyncio.Protocol):
         except asyncio.CancelledError: #when .cancel() is called for this coroutine
             self.duty_cycle = [0, 0]
             self.sendDutyCycleMsg(2)
-            await asyncio.sleep(1) #Wait for a while to ensure that the cancel message was sent before closing the serial port
-            self.transport.close()
-            print("Serial port closed and control task executed")
+            print("Heater Control Task Power Sine Exited")
+    
+    async def heaterManual(self):
+        """Coroutine to set the duty cycle of both heaters to the value stored in self.amplitude. Example: self.amplitude = 3.55, duty cycle set to 3.55*
+        """
+        try:
+            for heater in HEATERS:
+                self.duty_cycle[heater] = self.amplitude
+            self.sendDutyCycleMsg(2)
+
+            while True:
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            self.duty_cycle = [0, 0]
+            self.sendDutyCycleMsg(2)
+            print("Heater Control Task Manual Exited")
+
             
 
     def sendDutyCycleMsg(self, heater:int):
@@ -332,49 +406,6 @@ async def powerQueueHandler(database:aiosqlite.Connection, power_table_name:str,
             await database.commit()
     except asyncio.CancelledError:
         print("Power Queue Shutting Down")
-
-async def testSettingHookHandler(database:aiosqlite.Connection, test_setting_table:str):
-    """handler for webhook pushed by website when user updates the test settings so the script checks the database 
-
-    Args:
-        database (aiosqlite.Connection):
-        test_setting_table (str): name of the table for test setting data inside primary sqlite database
-    """
-    async with aiohttp.ClientSession() as session:
-        while True:
-            #Every time a new response is generated by the endpoint, this program updates its values based on the database, and then reconnects to the webhook waiting for the newone
-            async with session.get(TEST_SETTING_WEBHOOK_ENDPOINT) as response:
-                # http response should have the following format:
-                # status: 200,
-                # headers: { "content-type": "text/plain" },
-                # body: "New Test Setting"
-                if response.body == "New Test Setting": #If the response has the proper content
-                    most_recent = await database.execute_fetchall(f"SELECT * FROM {test_setting_table} ORDER BY datetime DESC LIMIT 1") #Instead of using the webhook to transfer data about the new test settings, the database is used as the only groundtruth of information
-                    most_recent = most_recent[0]
-                    if most_recent != most_recent[0] or control_amplitude != most_recent[2] or control_modes_map[most_recent[0]] != control_mode: # check to see if there are any new values from the database so bad webhook messages are caught and the time isn't reset arbitrarily
-                        most_recent = most_recent[0]
-                        control_freq = most_recent[1] #Set new freq
-                        control_amplitude = most_recent[2] #Set new amplitude
-                        time_start = time.time() #Restart the time used by the sin wave calculator in SerialComm.powerControl
-                        control_mode = control_modes_map[most_recent[0]] #Will throw key error if improper mode is 
-
-
-async def webhookGracefulExit(loop:asyncio.AbstractEventLoop):
-    """Wait for test over webhook to end this program
-
-    Args:
-        loop (asyncio.AbstractEventLoop): primary event loop
-    """
-    async with aiohttp.ClientSession() as session:
-        async with session.get(END_TEST_WEBHOOK_ENDPOINT) as response:
-            # http response should have the following format:
-            # status: 200,
-            # headers: { "content-type": "text/plain" },
-            # body: "Test Ended"
-            if response.body == "New Test Setting": #If the response has the proper content
-                await gracefulExit(loop)
-
-
 
 
 def signalGracefulExit(*args):
