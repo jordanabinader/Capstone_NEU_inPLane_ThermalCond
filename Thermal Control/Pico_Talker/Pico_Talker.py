@@ -58,7 +58,7 @@ END_TEST_ENDPOINT = "/test-end"
 
 
 class SerialComm(asyncio.Protocol):
-    def __init__(self, power_queue:asyncio.Queue, test_setting_queue:asyncio.Queue, db:aiosqlite.Connection, network_port:int = 3001, heater_scalar:Tuple[float, float] = (0,0), heater_resitance: Tuple[float, float] = (0.05, 0.05), supply_voltage:float = 12):
+    def __init__(self, power_queue:asyncio.Queue, test_setting_queue:asyncio.Queue, db:aiosqlite.Connection, network_port:int = 3001, heater_scalar:Tuple[float, float] = (1,1), heater_resitance: Tuple[float, float] = (0.05, 0.05), supply_voltage:float = 12):
         """Class for managing serial communicaiton with the raspberry pi pico power distribution and control PCB
         Source for this method of using functools.partial: https://tinkering.xyz/async-serial/#the-rest
         Args:
@@ -84,7 +84,7 @@ class SerialComm(asyncio.Protocol):
         self.HEATER_SCALAR = heater_scalar
         self.SUPPLY_VOLTAGE = supply_voltage
         self.HEATERS = (0, 1) # Mapping for heater numbers
-        self.DUTY_CYCLE_UPDATE_PERIOD = 0.5 # Seconds
+        self.DUTY_CYCLE_UPDATE_PERIOD = 0.1 # Seconds
 
         #Webpage network info
         self.port = network_port
@@ -286,6 +286,7 @@ class SerialComm(asyncio.Protocol):
     async def stall(self):
         """Loop to be used similar to heaterPower or heaterManual, however this one just does nothing. used when first starting the system up
         """
+        print("Entered Stall Control Mode")
         try: 
             while True:
                 await asyncio.sleep(0.5) #This should stay relatively short to ensure that when it gets cancelled it can cancel quickly
@@ -295,12 +296,14 @@ class SerialComm(asyncio.Protocol):
     async def heaterPower(self):
         """Coroutine to infinitely loop and calculate the duty cycle of the heaters for the raspberry pi pico using a power sin wave
         """
+        print("Heater Control Mode Entered")
+        print(self.frequency, self.control_mode, self.amplitude)
         try:
             while True:
                 await asyncio.sleep(self.DUTY_CYCLE_UPDATE_PERIOD) #pause duty cycle update for a bit while being non-blocking
                 curr_time = time.time()
                 for heater in self.HEATERS:
-                    self.duty_cycle[heater] = math.sqrt(self.HEATER_SCALAR[heater]*self.HEATER_RESISTANCE[heater]*(control_amplitude*math.sin(control_freq*(curr_time-self.start_time)/(2*math.pi))+control_amplitude))*100/self.SUPPLY_VOLTAGE
+                    self.duty_cycle[heater] = math.sqrt(self.HEATER_SCALAR[heater]*self.HEATER_RESISTANCE[heater]*(self.amplitude*math.sin(self.frequency*(curr_time-self.start_time)/(2*math.pi))+self.amplitude))*100/self.SUPPLY_VOLTAGE
                 
                 self.sendDutyCycleMsg(2)
                 print(f"Time: {curr_time-self.start_time} Heater 0: {self.duty_cycle[0]} Heater 1: {self.duty_cycle[1]}")
@@ -313,6 +316,7 @@ class SerialComm(asyncio.Protocol):
     async def heaterManual(self):
         """Coroutine to set the duty cycle of both heaters to the value stored in self.amplitude. Example: self.amplitude = 3.55, duty cycle set to 3.55*
         """
+        print("Entered Manual Control Mode")
         try:
             for heater in self.HEATERS:
                 self.duty_cycle[heater] = self.amplitude
