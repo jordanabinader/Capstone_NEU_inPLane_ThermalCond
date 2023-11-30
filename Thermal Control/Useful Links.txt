@@ -1,1 +1,0 @@
-https://community.element14.com/products/raspberry-pi/b/blog/posts/four-multicore-c-programs-for-raspberry-pi-pico-using-arduino-ide
