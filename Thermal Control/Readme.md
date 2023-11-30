@@ -8,7 +8,7 @@ Pico_Talker.py is the python script that controls the power output of the heater
 
 #### Instructions
 
-1. Install Python. This code was tested to run on Python 3.11.6
+1. Install Python. This code was tested to run on Python 3.11.6 and Python 3.11.5
 1. Install required packages with: `pip install -r requirements.txt`
 1. Run the script with `python Pico_Talker.py {ARGUMENTS}` with the desired arguments. See the arguments section below. 
 
