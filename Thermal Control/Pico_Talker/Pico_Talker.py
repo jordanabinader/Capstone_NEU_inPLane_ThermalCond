@@ -9,7 +9,6 @@ import time
 from datetime import datetime
 import math
 from functools import partial
-import aiohttp
 from aiohttp import web
 import signal
 import os
