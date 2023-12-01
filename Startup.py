@@ -40,7 +40,7 @@ for i, parent in enumerate(reversed(curr_path.as_posix().split('/'))): #Get the 
 if REPO_BASE_PATH is None:
     raise FileNotFoundError ("Startup file not in proper git directory")
 
-ABS_PICO_TALKER_PATH = str(REPO_BASE_PATH / REPO_PICO_TALKER_PATH)
+ABS_PICO_TALKER_PATH = (REPO_BASE_PATH / REPO_PICO_TALKER_PATH).as_posix()
 
 
 if __name__ == "__main__":
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     pico_talker_arg_str = " ".join([str(i) for row in [(key, pico_talker_args[key]) for key in pico_talker_args.keys() if pico_talker_args[key] is not None] for i in row])
     
-    PICO_TALKER_START = f'python ""{ABS_PICO_TALKER_PATH}"" {pico_talker_arg_str}'
+    PICO_TALKER_START = f'python "{ABS_PICO_TALKER_PATH}" {pico_talker_arg_str}'
     print(PICO_TALKER_START)
     loop = asyncio.get_event_loop()
     app = web.Application()
